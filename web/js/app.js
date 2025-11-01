@@ -92,14 +92,17 @@ class RepoVis {
                         'label': 'data(name)',
                         'text-valign': 'center',
                         'text-halign': 'right',
-                        'text-margin-x': 5,
-                        'font-size': '12px',
+                        'text-margin-x': 10,
+                        'font-size': '11px',
                         'color': '#e0e0e0',
                         'background-color': 'data(color)',
                         'width': 'data(size)',
                         'height': 'data(size)',
                         'border-width': 2,
-                        'border-color': '#3a3a3a'
+                        'border-color': '#3a3a3a',
+                        'text-background-color': '#1e1e1e',
+                        'text-background-opacity': 0.8,
+                        'text-background-padding': '3px'
                     }
                 },
                 {
@@ -222,17 +225,66 @@ class RepoVis {
         this.cy.elements().remove();
         this.cy.add(elements);
         
-        // Apply layout
-        this.cy.layout({
+        // Custom layout: tree from left to right with better spacing
+        const layout = this.cy.layout({
             name: 'breadthfirst',
             directed: true,
-            spacingFactor: 1.5,
             roots: rootNodes.map(f => `node-${f.id}`),
-            animate: false
-        }).run();
+            padding: 50,
+            spacingFactor: 2.5, // More space between levels
+            nodeDimensionsIncludeLabels: true, // Account for label width
+            animate: false,
+            fit: true,
+            avoidOverlap: true,
+            maximal: false // Keep siblings close vertically
+        });
+        
+        layout.run();
 
+        // After layout, adjust positions to ensure labels don't overlap
+        this.adjustNodePositions();
+        
         // Fit to view
-        this.cy.fit(null, 50);
+        this.cy.fit(null, 80);
+    }
+
+    adjustNodePositions() {
+        // Get nodes by depth level
+        const levels = {};
+        this.cy.nodes().forEach(node => {
+            const depth = this.getNodeDepth(node);
+            if (!levels[depth]) levels[depth] = [];
+            levels[depth].push(node);
+        });
+
+        // For each level, space nodes vertically with enough room for labels
+        Object.keys(levels).forEach(depth => {
+            const nodes = levels[depth];
+            
+            // Sort by current y position
+            nodes.sort((a, b) => a.position().y - b.position().y);
+            
+            // Minimum vertical spacing (adjust based on node size + label)
+            let currentY = nodes[0].position().y;
+            nodes.forEach(node => {
+                const pos = node.position();
+                node.position({ x: pos.x, y: currentY });
+                
+                // Space based on node size
+                const nodeSize = node.data('size') || 30;
+                currentY += nodeSize + 40; // 40px vertical spacing between nodes
+            });
+        });
+    }
+
+    getNodeDepth(node) {
+        let depth = 0;
+        let current = node;
+        while (current.incomers('node').length > 0) {
+            current = current.incomers('node')[0];
+            depth++;
+        }
+        return depth;
     }
 
     interpolateColor(color1, color2, factor) {
