@@ -102,9 +102,10 @@ class RepoVis {
     }
 
     resetView() {
-        // Re-render from scratch to reset zoom
-        this.currentRoot = null;
-        this.renderSunburst();
+        // Reset zoom and pan to initial state
+        this.svg.transition()
+            .duration(750)
+            .call(this.zoom.transform, d3.zoomIdentity);
     }
 
     async applyFilters() {
@@ -136,13 +137,29 @@ class RepoVis {
             .style('font', '10px sans-serif');
 
         this.svg = svg;
-        this.g = svg.append('g')
+        
+        // Create a group for zoom/pan
+        this.zoomGroup = svg.append('g');
+        
+        this.g = this.zoomGroup.append('g')
             .attr('transform', `translate(${this.width / 2},${this.height / 2})`);
 
         // Add center text
         this.centerText = this.g.append('text')
             .attr('class', 'sunburst-center-text')
             .attr('dy', '0.35em');
+
+        // Add zoom behavior
+        const zoom = d3.zoom()
+            .scaleExtent([0.5, 8])  // Allow zoom from 50% to 800%
+            .on('zoom', (event) => {
+                this.zoomGroup.attr('transform', event.transform);
+            });
+
+        svg.call(zoom);
+        
+        // Store zoom behavior for reset
+        this.zoom = zoom;
     }
 
     buildHierarchy(files) {
@@ -267,127 +284,8 @@ class RepoVis {
     }
 
     clicked(event, p) {
-        // Show details on single click
+        // Show details
         this.showFileDetails(p.data);
-        
-        // Zoom on double-click
-        if (event.detail === 2) {
-            this.currentRoot = p;
-            this.zoomTo(p);
-        }
-    }
-
-    zoomTo(p) {
-        // Store the current root
-        this.currentRoot = p;
-        
-        // Recompute the partition layout with new root
-        const root = d3.hierarchy(this.buildHierarchy(this.treeData))
-            .sum(d => {
-                if (!d.is_directory) {
-                    return d.metrics ? d.metrics.value : 1;
-                }
-                return 0;
-            })
-            .sort((a, b) => b.value - a.value);
-
-        // Calculate max value for color scale
-        const maxValue = d3.max(root.descendants(), d => {
-            if (d.data.metrics) {
-                return d.data.metrics.value;
-            }
-            return 0;
-        });
-
-        // Find the node we want to zoom to in the new hierarchy
-        const findNode = (node) => {
-            if (node.data.id === p.data.id) return node;
-            if (node.children) {
-                for (const child of node.children) {
-                    const found = findNode(child);
-                    if (found) return found;
-                }
-            }
-            return null;
-        };
-
-        const zoomNode = findNode(root) || root;
-
-        // Create partition layout
-        const partition = d3.partition()
-            .size([2 * Math.PI, this.radius]);
-
-        partition(root);
-
-        // Arc generator
-        const arc = d3.arc()
-            .startAngle(d => d.x0)
-            .endAngle(d => d.x1)
-            .padAngle(d => Math.min((d.x1 - d.x0) / 2, 0.005))
-            .padRadius(this.radius / 2)
-            .innerRadius(d => d.y0)
-            .outerRadius(d => d.y1 - 1);
-
-        // Color scale
-        const getColor = (d) => {
-            if (!d.data.metrics || d.data.metrics.value === 0) {
-                return '#2a2a2a';
-            }
-            
-            const intensity = d.data.metrics.value / maxValue;
-            
-            if (intensity < 0.5) {
-                const t = intensity * 2;
-                return this.interpolateColor('#2a2a2a', '#4a9eff', t);
-            } else {
-                const t = (intensity - 0.5) * 2;
-                return this.interpolateColor('#4a9eff', '#ff6b6b', t);
-            }
-        };
-
-        // Update arcs with transition
-        const path = this.g.selectAll('.sunburst-arc')
-            .data(root.descendants().filter(d => d.depth > 0), d => d.data.id || d.data.name);
-
-        // Transition arcs
-        path.transition()
-            .duration(750)
-            .attrTween('d', d => () => {
-                // Only show descendants of the zoom node
-                if (!d.ancestors().includes(zoomNode)) {
-                    return null;
-                }
-                
-                // Adjust the arc to zoom into the selected node
-                const xd = d3.interpolate(d.x0, d.x0);
-                const yd = d3.interpolate(d.y0, Math.max(0, d.y0 - zoomNode.y0));
-                const yr = d3.interpolate(d.y1, Math.max(0, d.y1 - zoomNode.y0));
-                
-                return arc({
-                    x0: d.x0,
-                    x1: d.x1,
-                    y0: Math.max(0, d.y0 - zoomNode.y0),
-                    y1: Math.max(0, d.y1 - zoomNode.y0)
-                });
-            });
-
-        // Update center text
-        this.centerText
-            .transition()
-            .duration(750)
-            .text(p.data.name || 'root');
-
-        // Update text labels
-        const text = this.g.selectAll('.sunburst-text')
-            .data(root.descendants().filter(d => {
-                return d.depth > 0 && (d.x1 - d.x0) > 0.1;
-            }), d => d.data.id || d.data.name);
-
-        text.transition()
-            .duration(750)
-            .attr('opacity', d => {
-                return d.ancestors().includes(zoomNode) ? 1 : 0;
-            });
     }
 
     showTooltip(event, d) {
