@@ -377,50 +377,39 @@ class RepoVis {
                     return;
                 }
                 
-                // Calculate available space in the segment
+                const textElement = d3.select(this);
+                
+                // Calculate available space in the segment (the "textbox")
                 const arcAngle = d.x1 - d.x0;
                 const arcRadius = (d.y0 + d.y1) / 2;
                 const arcLength = arcAngle * arcRadius * zoomLevel;
                 const radialHeight = (d.y1 - d.y0) * zoomLevel;
                 
-                // Max font size is constrained by radial height (leave some padding)
-                const maxFontSizeByHeight = radialHeight * 0.6; // 60% of radial height
+                // Max font size constrained by radial height
+                const maxFontSizeByHeight = radialHeight * 0.7; // 70% of radial height
                 
-                // Also constrain by arc length relative to text
-                // We need to estimate how much space the text needs at different sizes
-                const textLength = d.data.name.length;
+                // Cap font size between min and max
+                const minFontSize = 8;
+                const maxFontSize = 20;
+                const maxAllowedSize = Math.min(maxFontSizeByHeight, maxFontSize);
                 
-                // Approximate character width at different font sizes (avg ~0.6em per char)
-                const estimateTextWidth = (fontSize) => textLength * fontSize * 0.6;
-                
-                // Find max font size where text fits in arc with padding
-                let fontSize = Math.min(maxFontSizeByHeight, 20); // Cap at 20px max
-                const minFontSize = 8; // Minimum readable size
-                
-                // Binary search for optimal font size
-                let low = minFontSize;
-                let high = fontSize;
-                let optimalSize = minFontSize;
-                
-                while (low <= high) {
-                    const mid = (low + high) / 2;
-                    const estimatedWidth = estimateTextWidth(mid);
-                    
-                    if (estimatedWidth <= arcLength * 0.9) { // 90% of arc length for padding
-                        optimalSize = mid;
-                        low = mid + 0.5;
-                    } else {
-                        high = mid - 0.5;
-                    }
+                if (maxAllowedSize < minFontSize) {
+                    textElement.style('display', 'none');
+                    return;
                 }
                 
-                // Only show if we can render at minimum size
-                if (optimalSize >= minFontSize && radialHeight >= 10) {
-                    d3.select(this)
-                        .style('display', null)
-                        .style('font-size', `${optimalSize}px`);
+                // Set the max font size and measure actual text width
+                textElement.style('font-size', `${maxAllowedSize}px`);
+                const actualTextWidth = this.getComputedTextLength();
+                
+                // Check if text actually fits in the available arc length
+                const fitsInArc = actualTextWidth <= arcLength * 0.95; // 95% for padding
+                const fitsInHeight = maxAllowedSize >= minFontSize;
+                
+                if (fitsInArc && fitsInHeight) {
+                    textElement.style('display', null);
                 } else {
-                    d3.select(this).style('display', 'none');
+                    textElement.style('display', 'none');
                 }
             });
     }
