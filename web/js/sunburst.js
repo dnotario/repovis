@@ -198,15 +198,7 @@ class RepoVis {
             .on('zoom', (event) => {
                 this.zoomGroup.attr('transform', event.transform);
                 
-                // Counter-scale text to keep constant size
-                const scale = 1 / event.transform.k;
-                this.g.selectAll('.sunburst-text')
-                    .style('font-size', `${11 * scale}px`);
-                
-                this.centerText
-                    .style('font-size', `${14 * scale}px`);
-                
-                // Update label visibility based on zoom level
+                // Update label visibility and sizing based on zoom level
                 this.updateLabelVisibility(event.transform.k);
             });
 
@@ -366,11 +358,8 @@ class RepoVis {
             })
             .attr('dy', '0.35em')
             .attr('text-anchor', 'middle')
-            .text(d => d.data.name)
-            .each(function(d) {
-                // Store text width at base font size for visibility calculation
-                d.textWidth = this.getComputedTextLength();
-            });
+            .style('font-size', '11px') // Default size
+            .text(d => d.data.name);
 
         // Update center text
         this.centerText.text(root.data.name);
@@ -380,24 +369,59 @@ class RepoVis {
     }
 
     updateLabelVisibility(zoomLevel) {
-        // Binary decision: show text if it fits in the segment
+        // Calculate optimal font size for each segment and show if text fits
         this.g.selectAll('.sunburst-text')
-            .style('display', function(d) {
-                if (!d || !d.textWidth) return 'none';
+            .each(function(d) {
+                if (!d || !d.data.name) {
+                    d3.select(this).style('display', 'none');
+                    return;
+                }
                 
-                // Calculate actual arc length at current zoom
+                // Calculate available space in the segment
                 const arcAngle = d.x1 - d.x0;
                 const arcRadius = (d.y0 + d.y1) / 2;
                 const arcLength = arcAngle * arcRadius * zoomLevel;
-                
-                // Calculate radial height at current zoom
                 const radialHeight = (d.y1 - d.y0) * zoomLevel;
                 
-                // Text will be rendered at constant size (11px)
-                // Check if text fits with a bit of padding
-                const fits = arcLength >= d.textWidth * 1.1 && radialHeight >= 14;
+                // Max font size is constrained by radial height (leave some padding)
+                const maxFontSizeByHeight = radialHeight * 0.6; // 60% of radial height
                 
-                return fits ? null : 'none';
+                // Also constrain by arc length relative to text
+                // We need to estimate how much space the text needs at different sizes
+                const textLength = d.data.name.length;
+                
+                // Approximate character width at different font sizes (avg ~0.6em per char)
+                const estimateTextWidth = (fontSize) => textLength * fontSize * 0.6;
+                
+                // Find max font size where text fits in arc with padding
+                let fontSize = Math.min(maxFontSizeByHeight, 20); // Cap at 20px max
+                const minFontSize = 8; // Minimum readable size
+                
+                // Binary search for optimal font size
+                let low = minFontSize;
+                let high = fontSize;
+                let optimalSize = minFontSize;
+                
+                while (low <= high) {
+                    const mid = (low + high) / 2;
+                    const estimatedWidth = estimateTextWidth(mid);
+                    
+                    if (estimatedWidth <= arcLength * 0.9) { // 90% of arc length for padding
+                        optimalSize = mid;
+                        low = mid + 0.5;
+                    } else {
+                        high = mid - 0.5;
+                    }
+                }
+                
+                // Only show if we can render at minimum size
+                if (optimalSize >= minFontSize && radialHeight >= 10) {
+                    d3.select(this)
+                        .style('display', null)
+                        .style('font-size', `${optimalSize}px`);
+                } else {
+                    d3.select(this).style('display', 'none');
+                }
             });
     }
 
