@@ -149,24 +149,18 @@ class RepoVis {
             .attr('class', 'sunburst-center-text')
             .attr('dy', '0.35em');
 
-        // Add zoom behavior
+        // Add zoom behavior - no limits
         const zoom = d3.zoom()
-            .scaleExtent([0.1, 50])  // Allow much more zoom
+            .scaleExtent([0.01, Infinity])
             .on('zoom', (event) => {
-                // Apply transform to main content
-                this.g.attr('transform', `translate(${this.width / 2},${this.height / 2}) scale(${event.transform.k}) translate(${event.transform.x / event.transform.k},${event.transform.y / event.transform.k})`);
+                this.zoomGroup.attr('transform', event.transform);
                 
-                // Counter-scale text to keep it constant size
+                // Counter-scale all text to keep constant size
+                const scale = 1 / event.transform.k;
                 this.g.selectAll('.sunburst-text')
-                    .attr('transform', d => {
-                        const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
-                        const y = (d.y0 + d.y1) / 2;
-                        const rotation = x < 180 ? 0 : 180;
-                        return `rotate(${x - 90}) translate(${y},0) rotate(${rotation}) scale(${1 / event.transform.k})`;
-                    });
+                    .attr('font-size', `${11 * scale}px`);
                 
-                // Counter-scale center text
-                this.centerText.attr('transform', `scale(${1 / event.transform.k})`);
+                this.centerText.attr('font-size', `${14 * scale}px`);
                 
                 // Update label visibility based on zoom level
                 this.updateLabelVisibility(event.transform.k);
@@ -176,7 +170,6 @@ class RepoVis {
         
         // Store zoom behavior for reset
         this.zoom = zoom;
-        this.currentZoomLevel = 1;
     }
 
     buildHierarchy(files) {
@@ -292,9 +285,10 @@ class RepoVis {
                 return `rotate(${x - 90}) translate(${y},0) rotate(${x < 180 ? 0 : 180})`;
             })
             .attr('dy', '0.35em')
+            .attr('text-anchor', 'middle')
             .text(d => d.data.name)
             .each(function(d) {
-                // Store dimensions for visibility calculation
+                // Store text width at base font size for visibility calculation
                 d.textWidth = this.getComputedTextLength();
             });
 
@@ -306,25 +300,24 @@ class RepoVis {
     }
 
     updateLabelVisibility(zoomLevel) {
-        // Update visibility of labels based on zoom level and available space
-        // Text size is constant, so we need more actual space as we zoom in
+        // Binary decision: show text if it fits in the segment
         this.g.selectAll('.sunburst-text')
             .style('display', function(d) {
                 if (!d || !d.textWidth) return 'none';
                 
-                // Calculate available space in the arc (scaled by zoom)
+                // Calculate actual arc length at current zoom
                 const arcAngle = d.x1 - d.x0;
                 const arcRadius = (d.y0 + d.y1) / 2;
                 const arcLength = arcAngle * arcRadius * zoomLevel;
                 
-                // Also check radial space (scaled by zoom)
-                const radialSpace = (d.y1 - d.y0) * zoomLevel;
+                // Calculate radial height at current zoom
+                const radialHeight = (d.y1 - d.y0) * zoomLevel;
                 
-                // Show label if text fits in arc length with padding
-                // Text is constant size, so we compare against fixed textWidth
-                const textFits = arcLength > d.textWidth * 1.2 && radialSpace > 15;
+                // Text will be rendered at constant size (11px)
+                // Check if text fits with a bit of padding
+                const fits = arcLength >= d.textWidth * 1.1 && radialHeight >= 14;
                 
-                return textFits ? null : 'none';
+                return fits ? null : 'none';
             });
     }
 
