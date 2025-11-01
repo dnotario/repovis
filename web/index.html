@@ -5,7 +5,6 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>repovis - Repository Visualization</title>
     <link rel="stylesheet" href="/static/css/style.css">
-    <script src="https://unpkg.com/cytoscape@3.28.1/dist/cytoscape.min.js"></script>
     <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
@@ -57,7 +56,7 @@
 
         <!-- Main Visualization -->
         <div id="visualization">
-            <div id="cy"></div>
+            <svg id="sunburst"></svg>
             <div id="legend">
                 <h3>Heat Map</h3>
                 <div class="legend-gradient"></div>
@@ -77,6 +76,6 @@
         </div>
     </div>
 
-    <script src="/static/js/app.js"></script>
+    <script src="/static/js/sunburst.js"></script>
 </body>
 </html>
