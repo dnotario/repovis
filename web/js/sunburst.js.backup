@@ -120,11 +120,28 @@ class RepoVis {
         document.getElementById('reset-view').addEventListener('click', () => {
             this.resetView();
         });
+
+        // Add back button handler (keyboard shortcut)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' || e.key === 'Escape') {
+                e.preventDefault();
+                this.goBack();
+            }
+        });
     }
 
     resetView() {
-        // Re-render the sunburst from scratch (goes back to root)
-        this.renderSunburst();
+        // Clear selection history and current selection
+        this.selectionHistory = [];
+        this.currentSelection = null;
+        
+        // Zoom back to root
+        if (this.root) {
+            this.zoomToNode(this.root);
+        }
+        
+        // Update selection highlight
+        this.updateSelectionHighlight();
     }
 
     async applyFilters() {
@@ -157,8 +174,44 @@ class RepoVis {
 
         this.svg = svg;
         
-        this.g = svg.append('g')
+        // Create a group for zoom/pan
+        this.zoomGroup = svg.append('g');
+        
+        this.g = this.zoomGroup.append('g')
             .attr('transform', `translate(${this.width / 2},${this.height / 2})`);
+
+        // Add center text
+        this.centerText = this.g.append('text')
+            .attr('class', 'sunburst-center-text')
+            .attr('dy', '0.35em');
+
+        // Add zoom behavior - no limits
+        const zoom = d3.zoom()
+            .scaleExtent([0.01, Infinity])
+            .on('zoom', (event) => {
+                this.zoomGroup.attr('transform', event.transform);
+                
+                // Debounce label updates to avoid flashing
+                if (this.labelUpdateTimeout) {
+                    clearTimeout(this.labelUpdateTimeout);
+                }
+                this.labelUpdateTimeout = setTimeout(() => {
+                    this.updateLabelVisibility(event.transform.k);
+                }, 50);
+            })
+            .on('end', (event) => {
+                // Always update at end of zoom/pan
+                if (this.labelUpdateTimeout) {
+                    clearTimeout(this.labelUpdateTimeout);
+                }
+                this.updateLabelVisibility(event.transform.k);
+            });
+
+        svg.call(zoom);
+        
+        // Store zoom behavior for reset
+        this.zoom = zoom;
+        this.currentRotation = 0;
     }
 
     buildHierarchy(files) {
@@ -198,37 +251,31 @@ class RepoVis {
         
         // Create d3 hierarchy
         const root = d3.hierarchy(hierarchyData)
-            .sum(d => !d.is_directory ? (d.metrics ? d.metrics.value : 1) : 0)
+            .sum(d => {
+                // Leaf nodes: use metric value or 1
+                if (!d.is_directory) {
+                    return d.metrics ? d.metrics.value : 1;
+                }
+                return 0;
+            })
             .sort((a, b) => b.value - a.value);
 
-        // Store root for navigation
+        // Store root for later use
         this.root = root;
-        this.currentRoot = root;
+
+        // Calculate max value for color scale
+        const maxValue = d3.max(root.descendants(), d => {
+            if (d.data.metrics) {
+                return d.data.metrics.value;
+            }
+            return 0;
+        });
 
         // Create partition layout
         const partition = d3.partition()
             .size([2 * Math.PI, this.radius]);
 
         partition(root);
-
-        // Calculate max value for color scale
-        const maxValue = d3.max(root.descendants(), d => d.data.metrics ? d.data.metrics.value : 0);
-
-        // Color function
-        const color = d3.scaleSequential([0, maxValue], d3.interpolateBlues);
-
-        // Clear previous
-        this.g.selectAll('*').remove();
-
-        // Add center text for current path
-        this.centerText = this.g.append('text')
-            .attr('class', 'sunburst-center-text')
-            .attr('text-anchor', 'middle')
-            .attr('dy', '0.35em')
-            .style('font-size', '14px')
-            .style('fill', '#fff')
-            .style('pointer-events', 'none')
-            .text(root.data.name || 'root');
 
         // Arc generator
         const arc = d3.arc()
@@ -239,137 +286,262 @@ class RepoVis {
             .innerRadius(d => d.y0)
             .outerRadius(d => d.y1 - 1);
 
-        const self = this;
+        // Color scale
+        const getColor = (d) => {
+            if (!d.data.metrics || d.data.metrics.value === 0) {
+                return '#2a2a2a';
+            }
+            
+            const intensity = d.data.metrics.value / maxValue;
+            
+            if (intensity < 0.5) {
+                const t = intensity * 2;
+                return this.interpolateColor('#2a2a2a', '#4a9eff', t);
+            } else {
+                const t = (intensity - 0.5) * 2;
+                return this.interpolateColor('#4a9eff', '#ff6b6b', t);
+            }
+        };
 
-        // Helper functions
-        function arcVisible(d) {
-            return d.y1 <= 3 && d.y0 >= 1 && d.x1 > d.x0;
-        }
+        // Clear previous
+        this.g.selectAll('.sunburst-arc').remove();
+        this.g.selectAll('.sunburst-text').remove();
 
-        function labelVisible(d) {
-            return d.y1 <= 3 && d.y0 >= 1 && (d.y1 - d.y0) * (d.x1 - d.x0) > 0.03;
-        }
-
-        function labelTransform(d) {
-            const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
-            const y = (d.y0 + d.y1) / 2 * self.radius;
-            return `rotate(${x - 90}) translate(${y},0) rotate(${x < 180 ? 0 : 180})`;
-        }
-
-        // Store current positions on each node
-        root.each(d => d.current = d);
-
-        // Create path elements
-        const path = this.g.append('g')
-            .selectAll('path')
+        // Draw arcs (including root at depth 0)
+        const path = this.g.selectAll('.sunburst-arc')
             .data(root.descendants())
             .join('path')
+            .attr('class', 'sunburst-arc')
+            .attr('d', arc)
             .attr('fill', d => {
-                if (d.depth === 0) return '#1a1a1a';
-                return d.data.metrics ? color(d.data.metrics.value) : '#2a2a2a';
+                if (d.depth === 0) return '#1a1a1a'; // Root is dark
+                return getColor(d);
             })
-            .attr('fill-opacity', d => arcVisible(d.current) ? (d.children ? 0.6 : 0.4) : 0)
-            .attr('pointer-events', d => arcVisible(d.current) ? 'auto' : 'none')
-            .attr('d', d => arc(d.current))
-            .style('cursor', 'pointer')
-            .on('click', clicked)
+            .attr('fill-opacity', d => {
+                if (d.depth === 0) return 0.3;
+                return d.data.is_directory ? 0.7 : 1;
+            })
+            .attr('stroke', d => {
+                // Highlight selected node
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return '#4a9eff';
+                }
+                return '#1e1e1e';
+            })
+            .attr('stroke-width', d => {
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return 3;
+                }
+                return 1.5;
+            })
+            .on('click', (event, d) => this.clicked(event, d))
             .on('mouseover', (event, d) => this.showTooltip(event, d))
             .on('mouseout', () => this.hideTooltip());
 
-        // Make them visible
-        path.filter(d => d.children)
-            .style('cursor', 'pointer');
-
-        path.append('title')
-            .text(d => `${d.ancestors().map(d => d.data.name).reverse().join('/')}\n${d.data.metrics ? d.data.metrics.value : 0}`);
-
-        // Add labels
-        const label = this.g.append('g')
-            .attr('pointer-events', 'none')
-            .attr('text-anchor', 'middle')
-            .style('user-select', 'none')
-            .selectAll('text')
-            .data(root.descendants().slice(1))
+        // Add labels - initially all rendered but with visibility controlled
+        const text = this.g.selectAll('.sunburst-text')
+            .data(root.descendants().filter(d => d.depth > 0))
             .join('text')
+            .attr('class', 'sunburst-text')
+            .attr('transform', d => {
+                const angle = (d.x0 + d.x1) / 2; // In radians
+                const angleDeg = angle * 180 / Math.PI; // Convert to degrees
+                const radius = (d.y0 + d.y1) / 2;
+                
+                // Rotate to the angle position
+                const rotation = angleDeg - 90;
+                
+                // Check if text would be upside down (on left half of circle)
+                // Text is upside down if the rotation puts it between 90 and 270 degrees
+                const finalRotation = rotation % 360;
+                const needsFlip = finalRotation > 90 && finalRotation < 270;
+                
+                if (needsFlip) {
+                    // Flip the text 180 degrees so it reads from outside-in
+                    return `rotate(${rotation}) translate(${radius},0) rotate(180)`;
+                } else {
+                    // Normal orientation - reads from inside-out
+                    return `rotate(${rotation}) translate(${radius},0)`;
+                }
+            })
             .attr('dy', '0.35em')
-            .attr('fill-opacity', d => +labelVisible(d.current))
-            .attr('transform', d => labelTransform(d.current))
-            .style('font-size', '10px')
-            .style('fill', '#fff')
+            .attr('text-anchor', 'middle')
             .text(d => d.data.name);
 
-        const parent = this.g.append('circle')
-            .datum(root)
-            .attr('r', this.radius)
-            .attr('fill', 'none')
-            .attr('pointer-events', 'all')
-            .on('click', clicked);
+        // Update center text
+        this.centerText.text(root.data.name);
 
-        function clicked(event, p) {
-            parent.datum(p.parent || root);
-
-            // Update current root and path
-            self.currentRoot = p;
-            self.updatePath(p);
-
-            root.each(d => d.target = {
-                x0: Math.max(0, Math.min(1, (d.x0 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
-                x1: Math.max(0, Math.min(1, (d.x1 - p.x0) / (p.x1 - p.x0))) * 2 * Math.PI,
-                y0: Math.max(0, d.y0 - p.depth),
-                y1: Math.max(0, d.y1 - p.depth)
-            });
-
-            const t = self.g.transition().duration(750);
-
-            path.transition(t)
-                .tween('data', d => {
-                    const i = d3.interpolate(d.current, d.target);
-                    return t => d.current = i(t);
-                })
-                .filter(function(d) {
-                    return +this.getAttribute('fill-opacity') || arcVisible(d.target);
-                })
-                .attr('fill-opacity', d => arcVisible(d.target) ? (d.children ? 0.6 : 0.4) : 0)
-                .attr('pointer-events', d => arcVisible(d.target) ? 'auto' : 'none')
-                .attrTween('d', d => () => arc(d.current));
-
-            label.filter(function(d) {
-                    return +this.getAttribute('fill-opacity') || labelVisible(d.target);
-                })
-                .transition(t)
-                .attr('fill-opacity', d => +labelVisible(d.target))
-                .attrTween('transform', d => () => labelTransform(d.current));
-        }
+        // Set initial label visibility - this will set font sizes and display
+        this.updateLabelVisibility(1);
     }
 
-    updatePath(node) {
-        // Build path from root to current node
-        const path = [];
-        let current = node;
-        while (current) {
-            path.unshift(current.data.name || 'root');
-            current = current.parent;
+    updateLabelVisibility(zoomLevel) {
+        // Simple approach: show text only if arc is large enough
+        this.g.selectAll('.sunburst-text')
+            .each(function(d) {
+                if (!d || !d.data.name) {
+                    d3.select(this).style('display', 'none');
+                    return;
+                }
+                
+                const textElement = d3.select(this);
+                
+                // Calculate arc dimensions
+                const arcAngle = d.x1 - d.x0; // radians
+                const radius = (d.y0 + d.y1) / 2;
+                const arcLength = arcAngle * radius * zoomLevel;
+                const radialThickness = (d.y1 - d.y0) * zoomLevel;
+                
+                // Fixed font sizes based on depth
+                const fontSizesByDepth = [0, 14, 12, 11, 10, 9];
+                let fontSize = fontSizesByDepth[Math.min(d.depth, fontSizesByDepth.length - 1)] || 9;
+                
+                // Minimum arc length and thickness to show text
+                const minArcLength = 40; // pixels
+                const minThickness = 12; // pixels
+                
+                if (arcLength < minArcLength || radialThickness < minThickness) {
+                    textElement.style('display', 'none');
+                    return;
+                }
+                
+                // Set font size and measure
+                textElement.style('font-size', `${fontSize}px`);
+                textElement.style('display', 'inline');
+                
+                const textWidth = this.getComputedTextLength();
+                
+                // Hide if text doesn't fit
+                if (textWidth > arcLength * 0.9) {
+                    textElement.style('display', 'none');
+                } else {
+                    textElement.style('display', 'inline');
+                }
+            });
+    }
+
+    clicked(event, p) {
+        // If clicking on root (center), go back instead
+        if (p.depth === 0) {
+            this.goBack();
+            return;
         }
         
-        // Update center text and UI path display
-        this.centerText.text(node.data.name || 'root');
+        // Show details
+        this.showFileDetails(p.data);
         
-        // Update path in UI (create if doesn't exist)
-        let pathDisplay = document.getElementById('current-path');
-        if (!pathDisplay) {
-            const container = document.querySelector('.visualization-container');
-            pathDisplay = document.createElement('div');
-            pathDisplay.id = 'current-path';
-            pathDisplay.style.cssText = 'position: absolute; top: 10px; left: 10px; background: rgba(0,0,0,0.7); padding: 10px; border-radius: 4px; color: #fff; font-family: monospace; font-size: 12px; z-index: 1000;';
-            container.style.position = 'relative';
-            container.insertBefore(pathDisplay, container.firstChild);
-        }
-        pathDisplay.textContent = path.join(' / ');
+        // Store selection
+        this.currentSelection = p;
         
-        // Show file details if not a directory
-        if (!node.data.is_directory) {
-            this.showFileDetails(node.data);
+        // Store selection history for back button
+        if (!this.selectionHistory) {
+            this.selectionHistory = [];
         }
+        this.selectionHistory.push(p);
+        
+        // Zoom to the clicked node (standard sunburst pattern)
+        this.zoomToNode(p);
+        
+        // Update arc strokes to highlight selection
+        this.updateSelectionHighlight();
+    }
+
+    zoomToNode(p) {
+        // Standard D3 sunburst zoom: rescale arcs so clicked node becomes the new "root"
+        // Calculate the new scale and translation
+        const newX = [p.x0, p.x1];
+        const newY = [p.y0, this.radius];
+        
+        const k = this.radius / (newY[1] - newY[0]);
+        const x = -newX[0] * k;
+        
+        // Update all arcs
+        const arc = d3.arc()
+            .startAngle(d => Math.max(0, Math.min(2 * Math.PI, (d.x0 - p.x0) / (p.x1 - p.x0) * 2 * Math.PI)))
+            .endAngle(d => Math.max(0, Math.min(2 * Math.PI, (d.x1 - p.x0) / (p.x1 - p.x0) * 2 * Math.PI)))
+            .innerRadius(d => Math.max(0, d.y0 - p.y0) * k)
+            .outerRadius(d => Math.max(0, d.y1 - p.y0) * k);
+        
+        // Transition arcs
+        this.g.selectAll('.sunburst-arc')
+            .transition()
+            .duration(750)
+            .attrTween('d', d => () => arc(d));
+        
+        // Update text positions
+        this.g.selectAll('.sunburst-text')
+            .transition()
+            .duration(750)
+            .attrTween('transform', d => () => {
+                const angle = ((d.x0 + d.x1) / 2 - p.x0) / (p.x1 - p.x0) * 2 * Math.PI;
+                const angleDeg = angle * 180 / Math.PI;
+                const radius = (((d.y0 + d.y1) / 2) - p.y0) * k;
+                const rotation = angleDeg - 90;
+                const finalRotation = rotation % 360;
+                const needsFlip = finalRotation > 90 && finalRotation < 270;
+                
+                if (needsFlip) {
+                    return `rotate(${rotation}) translate(${radius},0) rotate(180)`;
+                } else {
+                    return `rotate(${rotation}) translate(${radius},0)`;
+                }
+            })
+            .on('end', () => {
+                // Update label visibility after transition
+                this.updateLabelVisibility(1);
+            });
+    }
+
+    focusOnNode(p) {
+        // Legacy method - keeping for compatibility
+        this.zoomToNode(p);
+    }
+
+    goBack() {
+        if (!this.selectionHistory || this.selectionHistory.length === 0) {
+            // No history, reset to initial view
+            this.resetView();
+            return;
+        }
+        
+        // Remove current selection
+        this.selectionHistory.pop();
+        
+        if (this.selectionHistory.length === 0) {
+            // No more history, reset to root
+            this.currentSelection = null;
+            this.resetView();
+        } else {
+            // Get parent (last item in history)
+            const parent = this.selectionHistory[this.selectionHistory.length - 1];
+            
+            // Set as current selection
+            this.currentSelection = parent;
+            
+            // Zoom to parent (without adding to history again)
+            this.showFileDetails(parent.data);
+            this.zoomToNode(parent);
+        }
+        
+        // Update selection highlight
+        this.updateSelectionHighlight();
+    }
+
+    updateSelectionHighlight() {
+        // Update stroke on all arcs to highlight the selected one
+        this.g.selectAll('.sunburst-arc')
+            .attr('stroke', d => {
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return '#4a9eff';
+                }
+                return '#1e1e1e';
+            })
+            .attr('stroke-width', d => {
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return 3;
+                }
+                return 1.5;
+            });
     }
 
     showTooltip(event, d) {
