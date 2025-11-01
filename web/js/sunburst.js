@@ -99,11 +99,24 @@ class RepoVis {
         document.getElementById('reset-view').addEventListener('click', () => {
             this.resetView();
         });
+
+        // Add back button handler (keyboard shortcut)
+        document.addEventListener('keydown', (e) => {
+            if (e.key === 'Backspace' || e.key === 'Escape') {
+                e.preventDefault();
+                this.goBack();
+            }
+        });
     }
 
     resetView() {
+        // Clear selection history
+        this.selectionHistory = [];
+        
         // Reset zoom, pan, and rotation to initial state
         this.currentRotation = 0;
+        this.currentTranslate = { x: 0, y: 0 };
+        
         this.g.transition()
             .duration(750)
             .attr('transform', `translate(${this.width / 2},${this.height / 2}) rotate(0)`);
@@ -332,23 +345,78 @@ class RepoVis {
         // Show details
         this.showFileDetails(p.data);
         
-        // Rotate so the clicked segment's outer edge is on the right
-        this.rotateToSegment(p);
+        // Store selection history for back button
+        if (!this.selectionHistory) {
+            this.selectionHistory = [];
+        }
+        this.selectionHistory.push(p);
+        
+        // Rotate and pan so the node is centered-left
+        this.focusOnNode(p);
     }
 
-    rotateToSegment(p) {
-        // Calculate the angle to rotate so this segment's outer edge is at 90 degrees (right side)
+    focusOnNode(p) {
+        // Calculate the angle to rotate so this segment's middle is at 90 degrees (right side)
         const targetAngle = (p.x1 + p.x0) / 2; // Middle of the segment
         const rotationNeeded = (Math.PI / 2) - targetAngle; // Rotate to put it on the right
         const rotationDegrees = rotationNeeded * 180 / Math.PI;
         
-        // Store the new rotation
-        this.currentRotation = rotationDegrees;
+        // Calculate the radial position
+        const radius = (p.y0 + p.y1) / 2;
         
-        // Animate the rotation
+        // After rotation, the node will be at angle 90° (pointing right)
+        // We want it centered vertically on the left side of the screen
+        // Left side means 1/4 of screen width from left edge
+        const targetX = this.width / 4;
+        const targetY = this.height / 2;
+        
+        // The node after rotation will be at (radius, 0) in local coords (pointing right)
+        // We need to translate so it appears at (targetX, targetY)
+        const translateX = targetX - (this.width / 2) - radius;
+        const translateY = targetY - (this.height / 2);
+        
+        // Store current state
+        this.currentRotation = rotationDegrees;
+        this.currentTranslate = { x: translateX, y: translateY };
+        
+        // Apply rotation and translation via zoom transform
+        const transform = d3.zoomIdentity
+            .translate(translateX, translateY)
+            .scale(1);
+        
+        // Animate both the rotation and the zoom
         this.g.transition()
             .duration(750)
             .attr('transform', `translate(${this.width / 2},${this.height / 2}) rotate(${rotationDegrees})`);
+        
+        this.svg.transition()
+            .duration(750)
+            .call(this.zoom.transform, transform);
+    }
+
+    goBack() {
+        if (!this.selectionHistory || this.selectionHistory.length === 0) {
+            // No history, reset to initial view
+            this.resetView();
+            return;
+        }
+        
+        // Remove current selection
+        this.selectionHistory.pop();
+        
+        if (this.selectionHistory.length === 0) {
+            // No more history, reset
+            this.resetView();
+        } else {
+            // Go to parent (last item in history)
+            const parent = this.selectionHistory[this.selectionHistory.length - 1];
+            
+            // Don't add to history again
+            this.selectionHistory.pop();
+            
+            // Focus on parent
+            this.focusOnNode(parent);
+        }
     }
 
     showTooltip(event, d) {
