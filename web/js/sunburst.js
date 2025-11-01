@@ -151,9 +151,23 @@ class RepoVis {
 
         // Add zoom behavior
         const zoom = d3.zoom()
-            .scaleExtent([0.5, 8])  // Allow zoom from 50% to 800%
+            .scaleExtent([0.1, 50])  // Allow much more zoom
             .on('zoom', (event) => {
-                this.zoomGroup.attr('transform', event.transform);
+                // Apply transform to main content
+                this.g.attr('transform', `translate(${this.width / 2},${this.height / 2}) scale(${event.transform.k}) translate(${event.transform.x / event.transform.k},${event.transform.y / event.transform.k})`);
+                
+                // Counter-scale text to keep it constant size
+                this.g.selectAll('.sunburst-text')
+                    .attr('transform', d => {
+                        const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
+                        const y = (d.y0 + d.y1) / 2;
+                        const rotation = x < 180 ? 0 : 180;
+                        return `rotate(${x - 90}) translate(${y},0) rotate(${rotation}) scale(${1 / event.transform.k})`;
+                    });
+                
+                // Counter-scale center text
+                this.centerText.attr('transform', `scale(${1 / event.transform.k})`);
+                
                 // Update label visibility based on zoom level
                 this.updateLabelVisibility(event.transform.k);
             });
@@ -293,21 +307,22 @@ class RepoVis {
 
     updateLabelVisibility(zoomLevel) {
         // Update visibility of labels based on zoom level and available space
+        // Text size is constant, so we need more actual space as we zoom in
         this.g.selectAll('.sunburst-text')
             .style('display', function(d) {
                 if (!d || !d.textWidth) return 'none';
                 
-                // Calculate available space in the arc
+                // Calculate available space in the arc (scaled by zoom)
                 const arcAngle = d.x1 - d.x0;
                 const arcRadius = (d.y0 + d.y1) / 2;
                 const arcLength = arcAngle * arcRadius * zoomLevel;
                 
-                // Also check radial space
+                // Also check radial space (scaled by zoom)
                 const radialSpace = (d.y1 - d.y0) * zoomLevel;
                 
-                // Show label if text fits in arc length with some padding
-                // and radial space is sufficient
-                const textFits = arcLength > d.textWidth * 1.1 && radialSpace > 12;
+                // Show label if text fits in arc length with padding
+                // Text is constant size, so we compare against fixed textWidth
+                const textFits = arcLength > d.textWidth * 1.2 && radialSpace > 15;
                 
                 return textFits ? null : 'none';
             });
