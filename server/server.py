@@ -62,12 +62,20 @@ async def get_metadata():
 
 
 @app.get("/api/tree")
-async def get_tree():
-    """Get file tree structure"""
+async def get_tree(
+    start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
+    end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
+    contributors: Optional[str] = Query(None, description="Comma-separated contributor IDs"),
+    metric: str = Query("commit_count", description="Metric type: commit_count, lines_added, lines_deleted")
+):
+    """
+    Get file tree structure with metrics embedded.
+    If date range provided, includes metrics for that period.
+    """
     conn = get_db()
     cursor = conn.cursor()
     
-    # Get root directory (no parent)
+    # Get all files
     cursor.execute("""
         SELECT id, path, parent_id, name, is_directory
         FROM files
@@ -75,17 +83,87 @@ async def get_tree():
     """)
     
     files = []
+    file_ids = []
     for row in cursor.fetchall():
-        files.append({
+        file_data = {
             'id': row['id'],
             'path': row['path'],
             'parent_id': row['parent_id'],
             'name': row['name'],
             'is_directory': bool(row['is_directory'])
-        })
+        }
+        files.append(file_data)
+        file_ids.append(row['id'])
+    
+    # Get metrics if date range provided
+    metrics_map = {}
+    if start_date and end_date:
+        query = """
+            SELECT 
+                file_id,
+                SUM(commit_count) as total_commits,
+                SUM(lines_added) as total_lines_added,
+                SUM(lines_deleted) as total_lines_deleted
+            FROM file_metrics
+            WHERE date >= ? AND date <= ?
+        """
+        
+        params = [start_date, end_date]
+        
+        # Filter by contributors if provided
+        if contributors:
+            contributor_ids = [int(c.strip()) for c in contributors.split(',') if c.strip()]
+            if contributor_ids:
+                placeholders = ','.join('?' * len(contributor_ids))
+                query += f" AND contributor_id IN ({placeholders})"
+                params.extend(contributor_ids)
+        
+        query += " GROUP BY file_id"
+        
+        cursor.execute(query, params)
+        
+        for row in cursor.fetchall():
+            # Select the requested metric
+            if metric == "commit_count":
+                value = row['total_commits']
+            elif metric == "lines_added":
+                value = row['total_lines_added']
+            elif metric == "lines_deleted":
+                value = row['total_lines_deleted']
+            else:
+                value = row['total_commits']
+            
+            metrics_map[row['file_id']] = {
+                'commit_count': row['total_commits'],
+                'lines_added': row['total_lines_added'],
+                'lines_deleted': row['total_lines_deleted'],
+                'value': value  # The selected metric
+            }
+    
+    # Attach metrics to files
+    for file_data in files:
+        if file_data['id'] in metrics_map:
+            file_data['metrics'] = metrics_map[file_data['id']]
+        else:
+            file_data['metrics'] = None
+    
+    # Get date range
+    cursor.execute("""
+        SELECT MIN(date) as min_date, MAX(date) as max_date
+        FROM commits
+    """)
+    date_row = cursor.fetchone()
     
     conn.close()
-    return {'files': files}
+    
+    return {
+        'files': files,
+        'date_range': {
+            'min_date': date_row['min_date'],
+            'max_date': date_row['max_date']
+        },
+        'metric_type': metric
+    }
 
 
 @app.get("/api/contributors")
@@ -155,64 +233,7 @@ async def get_timeline(
     return {'timeline': timeline}
 
 
-@app.get("/api/metrics")
-async def get_metrics(
-    start_date: str = Query(..., description="Start date (YYYY-MM-DD)"),
-    end_date: str = Query(..., description="End date (YYYY-MM-DD)"),
-    contributors: Optional[str] = Query(None, description="Comma-separated contributor IDs"),
-    metric: str = Query("commit_count", description="Metric type: commit_count, lines_added, lines_deleted")
-):
-    """
-    Get aggregated metrics for files/directories in a time range
-    Returns heatmap data for visualization
-    """
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    # Build query
-    query = """
-        SELECT 
-            file_id,
-            SUM(commit_count) as total_commits,
-            SUM(lines_added) as total_lines_added,
-            SUM(lines_deleted) as total_lines_deleted
-        FROM file_metrics
-        WHERE date >= ? AND date <= ?
-    """
-    
-    params = [start_date, end_date]
-    
-    # Filter by contributors if provided
-    if contributors:
-        contributor_ids = [int(c.strip()) for c in contributors.split(',') if c.strip()]
-        if contributor_ids:
-            placeholders = ','.join('?' * len(contributor_ids))
-            query += f" AND contributor_id IN ({placeholders})"
-            params.extend(contributor_ids)
-    
-    query += " GROUP BY file_id"
-    
-    cursor.execute(query, params)
-    
-    metrics = []
-    for row in cursor.fetchall():
-        # Select the requested metric
-        if metric == "commit_count":
-            value = row['total_commits']
-        elif metric == "lines_added":
-            value = row['total_lines_added']
-        elif metric == "lines_deleted":
-            value = row['total_lines_deleted']
-        else:
-            value = row['total_commits']
-        
-        metrics.append({
-            'file_id': row['file_id'],
-            'value': value
-        })
-    
-    conn.close()
-    return {'metrics': metrics, 'metric_type': metric}
+
 
 
 @app.get("/api/file/{file_id}")
@@ -271,80 +292,10 @@ async def get_file_details(file_id: int):
     return file_info
 
 
-@app.get("/api/date-range")
-async def get_date_range():
-    """Get the min and max dates in the repository"""
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    cursor.execute("""
-        SELECT MIN(date) as min_date, MAX(date) as max_date
-        FROM commits
-    """)
-    
-    row = cursor.fetchone()
-    
-    conn.close()
-    return {
-        'min_date': row['min_date'],
-        'max_date': row['max_date']
-    }
 
 
-@app.get("/api/stats")
-async def get_stats(
-    start_date: Optional[str] = None,
-    end_date: Optional[str] = None,
-    contributors: Optional[str] = None
-):
-    """Get summary statistics for a time range"""
-    conn = get_db()
-    cursor = conn.cursor()
-    
-    query = """
-        SELECT 
-            COUNT(DISTINCT file_id) as files_changed,
-            COUNT(DISTINCT contributor_id) as active_contributors,
-            SUM(commit_count) as total_commits,
-            SUM(lines_added) as total_lines_added,
-            SUM(lines_deleted) as total_lines_deleted
-        FROM file_metrics
-    """
-    
-    params = []
-    conditions = []
-    
-    if start_date:
-        conditions.append("date >= ?")
-        params.append(start_date)
-    
-    if end_date:
-        conditions.append("date <= ?")
-        params.append(end_date)
-    
-    if contributors:
-        contributor_ids = [int(c.strip()) for c in contributors.split(',') if c.strip()]
-        if contributor_ids:
-            placeholders = ','.join('?' * len(contributor_ids))
-            conditions.append(f"contributor_id IN ({placeholders})")
-            params.extend(contributor_ids)
-    
-    if conditions:
-        query += " WHERE " + " AND ".join(conditions)
-    
-    cursor.execute(query, params)
-    row = cursor.fetchone()
-    
-    stats = {
-        'files_changed': row['files_changed'] or 0,
-        'active_contributors': row['active_contributors'] or 0,
-        'total_commits': row['total_commits'] or 0,
-        'total_lines_added': row['total_lines_added'] or 0,
-        'total_lines_deleted': row['total_lines_deleted'] or 0
-    }
-    
-    conn.close()
-    return stats
+
+
 
 
 def main():
