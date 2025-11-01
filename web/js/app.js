@@ -10,6 +10,7 @@ class RepoVis {
         this.selectedDateRange = { start: null, end: null };
         this.selectedContributors = [];
         this.currentMetric = 'commit_count';
+        this.expandedNodes = new Set(); // Track which directories are expanded
         
         this.init();
     }
@@ -106,6 +107,26 @@ class RepoVis {
                     }
                 },
                 {
+                    selector: 'node[isDirectory]',
+                    style: {
+                        'shape': 'round-rectangle'
+                    }
+                },
+                {
+                    selector: 'node[isExpanded]',
+                    style: {
+                        'border-color': '#4a9eff',
+                        'border-width': 3
+                    }
+                },
+                {
+                    selector: 'node.collapsed',
+                    style: {
+                        'background-opacity': 0.6,
+                        'text-opacity': 0.8
+                    }
+                },
+                {
                     selector: 'edge',
                     style: {
                         'width': 2,
@@ -131,7 +152,17 @@ class RepoVis {
             wheelSensitivity: 0.2
         });
 
-        // Click handler
+        // Double-click to expand/collapse directories
+        this.cy.on('dbltap', 'node', (evt) => {
+            const node = evt.target;
+            const fileData = node.data('fileData');
+            
+            if (fileData.is_directory) {
+                this.toggleNodeExpansion(fileData.id);
+            }
+        });
+
+        // Single click to show details
         this.cy.on('tap', 'node', (evt) => {
             const node = evt.target;
             this.showFileDetails(node.data('fileData'));
@@ -177,16 +208,23 @@ class RepoVis {
     renderTree() {
         if (!this.treeData) return;
 
-        // Calculate max metric value for color scaling
-        const maxValue = Math.max(...this.treeData
+        // Build a map for quick lookup
+        const fileMap = {};
+        this.treeData.forEach(f => fileMap[f.id] = f);
+
+        // Determine which nodes to show based on expansion state
+        const visibleNodes = this.getVisibleNodes(fileMap);
+
+        // Calculate max metric value for color scaling (among visible nodes)
+        const maxValue = Math.max(...visibleNodes
             .filter(f => f.metrics)
             .map(f => f.metrics.value), 1);
 
         // Build nodes and edges
         const elements = [];
-        const rootNodes = this.treeData.filter(f => f.parent_id === null);
+        const rootNodes = visibleNodes.filter(f => f.parent_id === null);
 
-        this.treeData.forEach(file => {
+        visibleNodes.forEach(file => {
             const value = file.metrics ? file.metrics.value : 0;
             const intensity = value / maxValue;
             
@@ -205,21 +243,28 @@ class RepoVis {
             }
 
             // Size based on whether it's a directory and metric value
-            const baseSize = file.is_directory ? 30 : 20;
-            const size = baseSize + (intensity * 20);
+            const baseSize = file.is_directory ? 35 : 25;
+            const size = baseSize + (intensity * 15);
+
+            // Check if this directory has children and if it's expanded
+            const hasChildren = file.is_directory && this.treeData.some(f => f.parent_id === file.id);
+            const isExpanded = this.expandedNodes.has(file.id);
 
             elements.push({
                 data: {
                     id: `node-${file.id}`,
-                    name: file.name,
+                    name: file.name + (hasChildren && !isExpanded ? ' [+]' : ''),
                     color: color,
                     size: size,
-                    fileData: file
-                }
+                    fileData: file,
+                    isDirectory: file.is_directory,
+                    isExpanded: isExpanded
+                },
+                classes: hasChildren && !isExpanded ? 'collapsed' : ''
             });
 
-            // Add edge to parent
-            if (file.parent_id !== null) {
+            // Add edge to parent (only if parent is visible)
+            if (file.parent_id !== null && visibleNodes.find(f => f.id === file.parent_id)) {
                 elements.push({
                     data: {
                         id: `edge-${file.id}`,
@@ -240,12 +285,12 @@ class RepoVis {
             directed: true,
             roots: rootNodes.map(f => `node-${f.id}`),
             padding: 50,
-            spacingFactor: 2.5, // More space between levels
-            nodeDimensionsIncludeLabels: true, // Account for label width
+            spacingFactor: 2.5,
+            nodeDimensionsIncludeLabels: true,
             animate: false,
             fit: true,
             avoidOverlap: true,
-            maximal: false // Keep siblings close vertically
+            maximal: false
         });
         
         layout.run();
@@ -255,6 +300,38 @@ class RepoVis {
         
         // Fit to view
         this.cy.fit(null, 80);
+    }
+
+    getVisibleNodes(fileMap) {
+        // Start with root nodes
+        const visible = [];
+        const toProcess = this.treeData.filter(f => f.parent_id === null);
+
+        while (toProcess.length > 0) {
+            const node = toProcess.shift();
+            visible.push(node);
+
+            // If this is an expanded directory, add its children to process
+            if (node.is_directory && this.expandedNodes.has(node.id)) {
+                const children = this.treeData.filter(f => f.parent_id === node.id);
+                toProcess.push(...children);
+            }
+        }
+
+        return visible;
+    }
+
+    toggleNodeExpansion(fileId) {
+        if (this.expandedNodes.has(fileId)) {
+            // Collapse: remove from expanded set
+            this.expandedNodes.delete(fileId);
+        } else {
+            // Expand: add to expanded set
+            this.expandedNodes.add(fileId);
+        }
+
+        // Re-render the tree
+        this.renderTree();
     }
 
     adjustNodePositions() {
@@ -394,6 +471,12 @@ class RepoVis {
             <p><strong>Path:</strong> ${fileData.path}</p>
             <p><strong>Type:</strong> ${fileData.is_directory ? 'Directory' : 'File'}</p>
         `;
+        
+        if (fileData.is_directory) {
+            const childCount = this.treeData.filter(f => f.parent_id === fileData.id).length;
+            html += `<p><strong>Children:</strong> ${childCount}</p>`;
+            html += `<p><em>Double-click to ${this.expandedNodes.has(fileData.id) ? 'collapse' : 'expand'}</em></p>`;
+        }
         
         if (fileData.metrics) {
             html += `
