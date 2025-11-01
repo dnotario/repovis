@@ -154,12 +154,15 @@ class RepoVis {
             .scaleExtent([0.5, 8])  // Allow zoom from 50% to 800%
             .on('zoom', (event) => {
                 this.zoomGroup.attr('transform', event.transform);
+                // Update label visibility based on zoom level
+                this.updateLabelVisibility(event.transform.k);
             });
 
         svg.call(zoom);
         
         // Store zoom behavior for reset
         this.zoom = zoom;
+        this.currentZoomLevel = 1;
     }
 
     buildHierarchy(files) {
@@ -264,11 +267,9 @@ class RepoVis {
             .on('mouseover', (event, d) => this.showTooltip(event, d))
             .on('mouseout', () => this.hideTooltip());
 
-        // Add labels for larger segments
+        // Add labels - initially all rendered but with visibility controlled
         const text = this.g.selectAll('.sunburst-text')
-            .data(root.descendants().filter(d => {
-                return d.depth > 0 && (d.x1 - d.x0) > 0.1; // Only show if arc is large enough
-            }))
+            .data(root.descendants().filter(d => d.depth > 0))
             .join('text')
             .attr('class', 'sunburst-text')
             .attr('transform', d => {
@@ -277,10 +278,39 @@ class RepoVis {
                 return `rotate(${x - 90}) translate(${y},0) rotate(${x < 180 ? 0 : 180})`;
             })
             .attr('dy', '0.35em')
-            .text(d => d.data.name);
+            .text(d => d.data.name)
+            .each(function(d) {
+                // Store dimensions for visibility calculation
+                d.textWidth = this.getComputedTextLength();
+            });
 
         // Update center text
         this.centerText.text(root.data.name);
+
+        // Set initial label visibility
+        this.updateLabelVisibility(1);
+    }
+
+    updateLabelVisibility(zoomLevel) {
+        // Update visibility of labels based on zoom level and available space
+        this.g.selectAll('.sunburst-text')
+            .style('display', function(d) {
+                if (!d || !d.textWidth) return 'none';
+                
+                // Calculate available space in the arc
+                const arcAngle = d.x1 - d.x0;
+                const arcRadius = (d.y0 + d.y1) / 2;
+                const arcLength = arcAngle * arcRadius * zoomLevel;
+                
+                // Also check radial space
+                const radialSpace = (d.y1 - d.y0) * zoomLevel;
+                
+                // Show label if text fits in arc length with some padding
+                // and radial space is sufficient
+                const textFits = arcLength > d.textWidth * 1.1 && radialSpace > 12;
+                
+                return textFits ? null : 'none';
+            });
     }
 
     clicked(event, p) {
