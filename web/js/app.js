@@ -303,13 +303,18 @@ class RepoVis {
     }
 
     getVisibleNodes(fileMap) {
-        // Start with root nodes
+        // Start with ALL root nodes (both files and directories)
         const visible = [];
-        const toProcess = this.treeData.filter(f => f.parent_id === null);
+        const rootNodes = this.treeData.filter(f => f.parent_id === null);
+        const toProcess = [...rootNodes];
 
         while (toProcess.length > 0) {
             const node = toProcess.shift();
-            visible.push(node);
+            
+            // Only add if not already added
+            if (!visible.find(v => v.id === node.id)) {
+                visible.push(node);
+            }
 
             // If this is an expanded directory, add its children to process
             if (node.is_directory && this.expandedNodes.has(node.id)) {
