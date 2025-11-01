@@ -135,17 +135,10 @@ class RepoVis {
         this.selectionHistory = [];
         this.currentSelection = null;
         
-        // Reset zoom, pan, and rotation to initial state
-        this.currentRotation = 0;
-        this.currentTranslate = { x: 0, y: 0 };
-        
-        this.g.transition()
-            .duration(750)
-            .attr('transform', `translate(${this.width / 2},${this.height / 2}) rotate(0)`);
-        
-        this.svg.transition()
-            .duration(750)
-            .call(this.zoom.transform, d3.zoomIdentity);
+        // Zoom back to root
+        if (this.root) {
+            this.zoomToNode(this.root);
+        }
         
         // Update selection highlight
         this.updateSelectionHighlight();
@@ -267,6 +260,9 @@ class RepoVis {
             })
             .sort((a, b) => b.value - a.value);
 
+        // Store root for later use
+        this.root = root;
+
         // Calculate max value for color scale
         const maxValue = d3.max(root.descendants(), d => {
             if (d.data.metrics) {
@@ -370,18 +366,17 @@ class RepoVis {
             })
             .attr('dy', '0.35em')
             .attr('text-anchor', 'middle')
-            .style('font-size', '11px') // Default size
             .text(d => d.data.name);
 
         // Update center text
         this.centerText.text(root.data.name);
 
-        // Set initial label visibility
+        // Set initial label visibility - this will set font sizes and display
         this.updateLabelVisibility(1);
     }
 
     updateLabelVisibility(zoomLevel) {
-        // Calculate optimal font size for each segment and show if text fits
+        // Simple approach: show text only if arc is large enough
         this.g.selectAll('.sunburst-text')
             .each(function(d) {
                 if (!d || !d.data.name) {
@@ -391,53 +386,47 @@ class RepoVis {
                 
                 const textElement = d3.select(this);
                 
-                // Calculate available space in the segment (the "textbox")
-                // These are in the original coordinate space
+                // Calculate arc dimensions
                 const arcAngle = d.x1 - d.x0; // radians
-                const arcRadius = (d.y0 + d.y1) / 2; // radius in original coords
+                const radius = (d.y0 + d.y1) / 2;
+                const arcLength = arcAngle * radius * zoomLevel;
+                const radialThickness = (d.y1 - d.y0) * zoomLevel;
                 
-                // Available arc length in original coords
-                const arcLengthOriginal = arcAngle * arcRadius;
+                // Fixed font sizes based on depth
+                const fontSizesByDepth = [0, 14, 12, 11, 10, 9];
+                let fontSize = fontSizesByDepth[Math.min(d.depth, fontSizesByDepth.length - 1)] || 9;
                 
-                // Available radial height in original coords
-                const radialHeightOriginal = d.y1 - d.y0;
+                // Minimum arc length and thickness to show text
+                const minArcLength = 40; // pixels
+                const minThickness = 12; // pixels
                 
-                // Max font size constrained by radial height
-                // Font size is in screen pixels, so we need to scale it
-                const maxFontSizeByHeight = radialHeightOriginal * zoomLevel * 0.7;
-                
-                // Cap font size between min and max
-                const minFontSize = 8;
-                const maxFontSize = 20;
-                const maxAllowedSize = Math.min(maxFontSizeByHeight, maxFontSize);
-                
-                if (maxAllowedSize < minFontSize) {
+                if (arcLength < minArcLength || radialThickness < minThickness) {
                     textElement.style('display', 'none');
                     return;
                 }
                 
-                // Set the font size
-                textElement.style('font-size', `${maxAllowedSize}px`);
+                // Set font size and measure
+                textElement.style('font-size', `${fontSize}px`);
+                textElement.style('display', 'inline');
                 
-                // Measure actual text width in screen pixels
-                const actualTextWidthPixels = this.getComputedTextLength();
+                const textWidth = this.getComputedTextLength();
                 
-                // Convert available arc length to screen pixels
-                const arcLengthPixels = arcLengthOriginal * zoomLevel;
-                
-                // Check if text actually fits with padding
-                const fitsInArc = actualTextWidthPixels <= arcLengthPixels * 0.9;
-                const fitsInHeight = maxAllowedSize >= minFontSize;
-                
-                if (fitsInArc && fitsInHeight) {
-                    textElement.style('display', null);
-                } else {
+                // Hide if text doesn't fit
+                if (textWidth > arcLength * 0.9) {
                     textElement.style('display', 'none');
+                } else {
+                    textElement.style('display', 'inline');
                 }
             });
     }
 
     clicked(event, p) {
+        // If clicking on root (center), go back instead
+        if (p.depth === 0) {
+            this.goBack();
+            return;
+        }
+        
         // Show details
         this.showFileDetails(p.data);
         
@@ -450,50 +439,62 @@ class RepoVis {
         }
         this.selectionHistory.push(p);
         
-        // Rotate and pan so the node is centered-left
-        this.focusOnNode(p);
+        // Zoom to the clicked node (standard sunburst pattern)
+        this.zoomToNode(p);
         
         // Update arc strokes to highlight selection
         this.updateSelectionHighlight();
     }
 
+    zoomToNode(p) {
+        // Standard D3 sunburst zoom: rescale arcs so clicked node becomes the new "root"
+        // Calculate the new scale and translation
+        const newX = [p.x0, p.x1];
+        const newY = [p.y0, this.radius];
+        
+        const k = this.radius / (newY[1] - newY[0]);
+        const x = -newX[0] * k;
+        
+        // Update all arcs
+        const arc = d3.arc()
+            .startAngle(d => Math.max(0, Math.min(2 * Math.PI, (d.x0 - p.x0) / (p.x1 - p.x0) * 2 * Math.PI)))
+            .endAngle(d => Math.max(0, Math.min(2 * Math.PI, (d.x1 - p.x0) / (p.x1 - p.x0) * 2 * Math.PI)))
+            .innerRadius(d => Math.max(0, d.y0 - p.y0) * k)
+            .outerRadius(d => Math.max(0, d.y1 - p.y0) * k);
+        
+        // Transition arcs
+        this.g.selectAll('.sunburst-arc')
+            .transition()
+            .duration(750)
+            .attrTween('d', d => () => arc(d));
+        
+        // Update text positions
+        this.g.selectAll('.sunburst-text')
+            .transition()
+            .duration(750)
+            .attrTween('transform', d => () => {
+                const angle = ((d.x0 + d.x1) / 2 - p.x0) / (p.x1 - p.x0) * 2 * Math.PI;
+                const angleDeg = angle * 180 / Math.PI;
+                const radius = (((d.y0 + d.y1) / 2) - p.y0) * k;
+                const rotation = angleDeg - 90;
+                const finalRotation = rotation % 360;
+                const needsFlip = finalRotation > 90 && finalRotation < 270;
+                
+                if (needsFlip) {
+                    return `rotate(${rotation}) translate(${radius},0) rotate(180)`;
+                } else {
+                    return `rotate(${rotation}) translate(${radius},0)`;
+                }
+            })
+            .on('end', () => {
+                // Update label visibility after transition
+                this.updateLabelVisibility(1);
+            });
+    }
+
     focusOnNode(p) {
-        // Calculate the angle to rotate so this segment's middle is at 90 degrees (right side)
-        const targetAngle = (p.x1 + p.x0) / 2; // Middle of the segment
-        const rotationNeeded = (Math.PI / 2) - targetAngle; // Rotate to put it on the right
-        const rotationDegrees = rotationNeeded * 180 / Math.PI;
-        
-        // Calculate the radial position
-        const radius = (p.y0 + p.y1) / 2;
-        
-        // After rotation, the node will be at angle 90° (pointing right)
-        // We want it centered vertically on the left side of the screen
-        // Left side means 1/4 of screen width from left edge
-        const targetX = this.width / 4;
-        const targetY = this.height / 2;
-        
-        // The node after rotation will be at (radius, 0) in local coords (pointing right)
-        // We need to translate so it appears at (targetX, targetY)
-        const translateX = targetX - (this.width / 2) - radius;
-        const translateY = targetY - (this.height / 2);
-        
-        // Store current state
-        this.currentRotation = rotationDegrees;
-        this.currentTranslate = { x: translateX, y: translateY };
-        
-        // Apply rotation and translation via zoom transform
-        const transform = d3.zoomIdentity
-            .translate(translateX, translateY)
-            .scale(1);
-        
-        // Animate both the rotation and the zoom
-        this.g.transition()
-            .duration(750)
-            .attr('transform', `translate(${this.width / 2},${this.height / 2}) rotate(${rotationDegrees})`);
-        
-        this.svg.transition()
-            .duration(750)
-            .call(this.zoom.transform, transform);
+        // Legacy method - keeping for compatibility
+        this.zoomToNode(p);
     }
 
     goBack() {
@@ -507,7 +508,7 @@ class RepoVis {
         this.selectionHistory.pop();
         
         if (this.selectionHistory.length === 0) {
-            // No more history, reset
+            // No more history, reset to root
             this.currentSelection = null;
             this.resetView();
         } else {
@@ -517,9 +518,9 @@ class RepoVis {
             // Set as current selection
             this.currentSelection = parent;
             
-            // Focus on parent (without adding to history again)
+            // Zoom to parent (without adding to history again)
             this.showFileDetails(parent.data);
-            this.focusOnNode(parent);
+            this.zoomToNode(parent);
         }
         
         // Update selection highlight
