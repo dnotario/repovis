@@ -19,10 +19,23 @@ class RepoVis {
     }
 
     async init() {
-        // Load initial data
+        // Load initial data without date range to get the range first
         await this.loadMetadata();
         await this.loadContributors();
-        await this.loadTree();
+        
+        // First load without dates to get the date range
+        const response = await fetch(`${API_BASE}/tree`);
+        const data = await response.json();
+        this.dateRange = data.date_range;
+        
+        // Set form fields to full range
+        document.getElementById('start-date').value = this.dateRange.min_date;
+        document.getElementById('end-date').value = this.dateRange.max_date;
+        this.selectedDateRange.start = this.dateRange.min_date;
+        this.selectedDateRange.end = this.dateRange.max_date;
+        
+        // Now load with full date range to get metrics
+        await this.loadTree(this.dateRange.min_date, this.dateRange.max_date);
         
         // Initialize UI components
         this.initControls();
@@ -59,6 +72,14 @@ class RepoVis {
     async loadTree(startDate = null, endDate = null, contributors = null, metric = 'commit_count') {
         let url = `${API_BASE}/tree`;
         const params = new URLSearchParams();
+        
+        // Default to full date range if not specified
+        if (!startDate || !endDate) {
+            if (this.dateRange.min_date && this.dateRange.max_date) {
+                startDate = this.dateRange.min_date;
+                endDate = this.dateRange.max_date;
+            }
+        }
         
         if (startDate) params.append('start_date', startDate);
         if (endDate) params.append('end_date', endDate);
