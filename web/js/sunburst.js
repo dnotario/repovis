@@ -102,7 +102,12 @@ class RepoVis {
     }
 
     resetView() {
-        // Reset zoom and pan to initial state
+        // Reset zoom, pan, and rotation to initial state
+        this.currentRotation = 0;
+        this.g.transition()
+            .duration(750)
+            .attr('transform', `translate(${this.width / 2},${this.height / 2}) rotate(0)`);
+        
         this.svg.transition()
             .duration(750)
             .call(this.zoom.transform, d3.zoomIdentity);
@@ -153,29 +158,15 @@ class RepoVis {
         const zoom = d3.zoom()
             .scaleExtent([0.01, Infinity])
             .on('zoom', (event) => {
-                // Only transform the arcs, not the text
-                this.g.selectAll('.sunburst-arc').attr('transform', event.transform);
+                this.zoomGroup.attr('transform', event.transform);
                 
-                // Update text positions to follow arcs but don't scale them
-                const k = event.transform.k;
-                const tx = event.transform.x;
-                const ty = event.transform.y;
-                
+                // Counter-scale text to keep constant size
+                const scale = 1 / event.transform.k;
                 this.g.selectAll('.sunburst-text')
-                    .attr('transform', d => {
-                        const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
-                        const y = (d.y0 + d.y1) / 2;
-                        const rotation = x < 180 ? 0 : 180;
-                        
-                        // Apply same translation and scale to position, but counter-scale the text
-                        const posX = y * Math.cos((x - 90) * Math.PI / 180) * k + tx;
-                        const posY = y * Math.sin((x - 90) * Math.PI / 180) * k + ty;
-                        
-                        return `translate(${posX},${posY}) rotate(${x < 180 ? x - 90 : x + 90})`;
-                    });
+                    .style('font-size', `${11 * scale}px`);
                 
-                // Update center text position
-                this.centerText.attr('transform', `translate(${tx},${ty})`);
+                this.centerText
+                    .style('font-size', `${14 * scale}px`);
                 
                 // Update label visibility based on zoom level
                 this.updateLabelVisibility(event.transform.k);
@@ -185,6 +176,7 @@ class RepoVis {
         
         // Store zoom behavior for reset
         this.zoom = zoom;
+        this.currentRotation = 0;
     }
 
     buildHierarchy(files) {
@@ -339,6 +331,24 @@ class RepoVis {
     clicked(event, p) {
         // Show details
         this.showFileDetails(p.data);
+        
+        // Rotate so the clicked segment's outer edge is on the right
+        this.rotateToSegment(p);
+    }
+
+    rotateToSegment(p) {
+        // Calculate the angle to rotate so this segment's outer edge is at 90 degrees (right side)
+        const targetAngle = (p.x1 + p.x0) / 2; // Middle of the segment
+        const rotationNeeded = (Math.PI / 2) - targetAngle; // Rotate to put it on the right
+        const rotationDegrees = rotationNeeded * 180 / Math.PI;
+        
+        // Store the new rotation
+        this.currentRotation = rotationDegrees;
+        
+        // Animate the rotation
+        this.g.transition()
+            .duration(750)
+            .attr('transform', `translate(${this.width / 2},${this.height / 2}) rotate(${rotationDegrees})`);
     }
 
     showTooltip(event, d) {
