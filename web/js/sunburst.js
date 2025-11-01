@@ -345,16 +345,23 @@ class RepoVis {
             .attr('class', 'sunburst-text')
             .attr('transform', d => {
                 const angle = (d.x0 + d.x1) / 2; // In radians
-                const angleDeg = angle * 180 / Math.PI;
-                const y = (d.y0 + d.y1) / 2;
+                const angleDeg = angle * 180 / Math.PI; // Convert to degrees
+                const radius = (d.y0 + d.y1) / 2;
                 
-                // If on the left half (90° to 270°), flip text to read from outside-in
-                if (angleDeg > 90 && angleDeg < 270) {
-                    // Rotate to position, translate outward, then flip 180°
-                    return `rotate(${angleDeg * 180 / Math.PI - 90}) translate(${y},0) rotate(180)`;
+                // Rotate to the angle position
+                const rotation = angleDeg - 90;
+                
+                // Check if text would be upside down (on left half of circle)
+                // Text is upside down if the rotation puts it between 90 and 270 degrees
+                const finalRotation = rotation % 360;
+                const needsFlip = finalRotation > 90 && finalRotation < 270;
+                
+                if (needsFlip) {
+                    // Flip the text 180 degrees so it reads from outside-in
+                    return `rotate(${rotation}) translate(${radius},0) rotate(180)`;
                 } else {
-                    // Normal: rotate to position, translate outward
-                    return `rotate(${angleDeg * 180 / Math.PI - 90}) translate(${y},0)`;
+                    // Normal orientation - reads from inside-out
+                    return `rotate(${rotation}) translate(${radius},0)`;
                 }
             })
             .attr('dy', '0.35em')
