@@ -147,6 +147,15 @@ class RepoVis {
             this.currentMetric = e.target.value;
             this.applyFilters();
         });
+
+        document.getElementById('reset-view').addEventListener('click', () => {
+            this.resetView();
+        });
+    }
+
+    resetView() {
+        // Reset zoom and pan to fit all nodes
+        this.cy.fit(null, 80);
     }
 
     async applyFilters() {
