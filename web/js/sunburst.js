@@ -198,7 +198,19 @@ class RepoVis {
             .on('zoom', (event) => {
                 this.zoomGroup.attr('transform', event.transform);
                 
-                // Update label visibility and sizing based on zoom level
+                // Debounce label updates to avoid flashing
+                if (this.labelUpdateTimeout) {
+                    clearTimeout(this.labelUpdateTimeout);
+                }
+                this.labelUpdateTimeout = setTimeout(() => {
+                    this.updateLabelVisibility(event.transform.k);
+                }, 50);
+            })
+            .on('end', (event) => {
+                // Always update at end of zoom/pan
+                if (this.labelUpdateTimeout) {
+                    clearTimeout(this.labelUpdateTimeout);
+                }
                 this.updateLabelVisibility(event.transform.k);
             });
 
