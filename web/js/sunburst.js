@@ -323,7 +323,12 @@ class RepoVis {
             .attr('transform', d => {
                 const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
                 const y = (d.y0 + d.y1) / 2;
-                return `rotate(${x - 90}) translate(${y},0) rotate(${x < 180 ? 0 : 180})`;
+                // If on the left side (angle > 180), flip the text so it reads outside-in
+                if (x > 180) {
+                    return `rotate(${x - 90}) translate(${y},0) rotate(180)`;
+                } else {
+                    return `rotate(${x - 90}) translate(${y},0)`;
+                }
             })
             .attr('dy', '0.35em')
             .attr('text-anchor', 'middle')
