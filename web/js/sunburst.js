@@ -131,8 +131,9 @@ class RepoVis {
     }
 
     resetView() {
-        // Clear selection history
+        // Clear selection history and current selection
         this.selectionHistory = [];
+        this.currentSelection = null;
         
         // Reset zoom, pan, and rotation to initial state
         this.currentRotation = 0;
@@ -145,6 +146,9 @@ class RepoVis {
         this.svg.transition()
             .duration(750)
             .call(this.zoom.transform, d3.zoomIdentity);
+        
+        // Update selection highlight
+        this.updateSelectionHighlight();
     }
 
     async applyFilters() {
@@ -303,14 +307,33 @@ class RepoVis {
         this.g.selectAll('.sunburst-arc').remove();
         this.g.selectAll('.sunburst-text').remove();
 
-        // Draw arcs
+        // Draw arcs (including root at depth 0)
         const path = this.g.selectAll('.sunburst-arc')
-            .data(root.descendants().filter(d => d.depth > 0))
+            .data(root.descendants())
             .join('path')
             .attr('class', 'sunburst-arc')
             .attr('d', arc)
-            .attr('fill', d => getColor(d))
-            .attr('fill-opacity', d => d.data.is_directory ? 0.7 : 1)
+            .attr('fill', d => {
+                if (d.depth === 0) return '#1a1a1a'; // Root is dark
+                return getColor(d);
+            })
+            .attr('fill-opacity', d => {
+                if (d.depth === 0) return 0.3;
+                return d.data.is_directory ? 0.7 : 1;
+            })
+            .attr('stroke', d => {
+                // Highlight selected node
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return '#4a9eff';
+                }
+                return '#1e1e1e';
+            })
+            .attr('stroke-width', d => {
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return 3;
+                }
+                return 1.5;
+            })
             .on('click', (event, d) => this.clicked(event, d))
             .on('mouseover', (event, d) => this.showTooltip(event, d))
             .on('mouseout', () => this.hideTooltip());
@@ -321,13 +344,17 @@ class RepoVis {
             .join('text')
             .attr('class', 'sunburst-text')
             .attr('transform', d => {
-                const x = (d.x0 + d.x1) / 2 * 180 / Math.PI;
+                const angle = (d.x0 + d.x1) / 2; // In radians
+                const angleDeg = angle * 180 / Math.PI;
                 const y = (d.y0 + d.y1) / 2;
-                // If on the left side (angle > 180), flip the text so it reads outside-in
-                if (x > 180) {
-                    return `rotate(${x - 90}) translate(${y},0) rotate(180)`;
+                
+                // If on the left half (90° to 270°), flip text to read from outside-in
+                if (angleDeg > 90 && angleDeg < 270) {
+                    // Rotate to position, translate outward, then flip 180°
+                    return `rotate(${angleDeg * 180 / Math.PI - 90}) translate(${y},0) rotate(180)`;
                 } else {
-                    return `rotate(${x - 90}) translate(${y},0)`;
+                    // Normal: rotate to position, translate outward
+                    return `rotate(${angleDeg * 180 / Math.PI - 90}) translate(${y},0)`;
                 }
             })
             .attr('dy', '0.35em')
@@ -371,6 +398,9 @@ class RepoVis {
         // Show details
         this.showFileDetails(p.data);
         
+        // Store selection
+        this.currentSelection = p;
+        
         // Store selection history for back button
         if (!this.selectionHistory) {
             this.selectionHistory = [];
@@ -379,6 +409,9 @@ class RepoVis {
         
         // Rotate and pan so the node is centered-left
         this.focusOnNode(p);
+        
+        // Update arc strokes to highlight selection
+        this.updateSelectionHighlight();
     }
 
     focusOnNode(p) {
@@ -432,17 +465,39 @@ class RepoVis {
         
         if (this.selectionHistory.length === 0) {
             // No more history, reset
+            this.currentSelection = null;
             this.resetView();
         } else {
-            // Go to parent (last item in history)
+            // Get parent (last item in history)
             const parent = this.selectionHistory[this.selectionHistory.length - 1];
             
-            // Don't add to history again
-            this.selectionHistory.pop();
+            // Set as current selection
+            this.currentSelection = parent;
             
-            // Focus on parent
+            // Focus on parent (without adding to history again)
+            this.showFileDetails(parent.data);
             this.focusOnNode(parent);
         }
+        
+        // Update selection highlight
+        this.updateSelectionHighlight();
+    }
+
+    updateSelectionHighlight() {
+        // Update stroke on all arcs to highlight the selected one
+        this.g.selectAll('.sunburst-arc')
+            .attr('stroke', d => {
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return '#4a9eff';
+                }
+                return '#1e1e1e';
+            })
+            .attr('stroke-width', d => {
+                if (this.currentSelection && d.data.id === this.currentSelection.data.id) {
+                    return 3;
+                }
+                return 1.5;
+            });
     }
 
     showTooltip(event, d) {
