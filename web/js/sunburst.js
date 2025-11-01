@@ -380,13 +380,19 @@ class RepoVis {
                 const textElement = d3.select(this);
                 
                 // Calculate available space in the segment (the "textbox")
-                const arcAngle = d.x1 - d.x0;
-                const arcRadius = (d.y0 + d.y1) / 2;
-                const arcLength = arcAngle * arcRadius * zoomLevel;
-                const radialHeight = (d.y1 - d.y0) * zoomLevel;
+                // These are in the original coordinate space
+                const arcAngle = d.x1 - d.x0; // radians
+                const arcRadius = (d.y0 + d.y1) / 2; // radius in original coords
+                
+                // Available arc length in original coords
+                const arcLengthOriginal = arcAngle * arcRadius;
+                
+                // Available radial height in original coords
+                const radialHeightOriginal = d.y1 - d.y0;
                 
                 // Max font size constrained by radial height
-                const maxFontSizeByHeight = radialHeight * 0.7; // 70% of radial height
+                // Font size is in screen pixels, so we need to scale it
+                const maxFontSizeByHeight = radialHeightOriginal * zoomLevel * 0.7;
                 
                 // Cap font size between min and max
                 const minFontSize = 8;
@@ -398,12 +404,17 @@ class RepoVis {
                     return;
                 }
                 
-                // Set the max font size and measure actual text width
+                // Set the font size
                 textElement.style('font-size', `${maxAllowedSize}px`);
-                const actualTextWidth = this.getComputedTextLength();
                 
-                // Check if text actually fits in the available arc length
-                const fitsInArc = actualTextWidth <= arcLength * 0.95; // 95% for padding
+                // Measure actual text width in screen pixels
+                const actualTextWidthPixels = this.getComputedTextLength();
+                
+                // Convert available arc length to screen pixels
+                const arcLengthPixels = arcLengthOriginal * zoomLevel;
+                
+                // Check if text actually fits with padding
+                const fitsInArc = actualTextWidthPixels <= arcLengthPixels * 0.9;
                 const fitsInHeight = maxAllowedSize >= minFontSize;
                 
                 if (fitsInArc && fitsInHeight) {
