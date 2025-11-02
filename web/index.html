@@ -3,80 +3,34 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>repovis - Repository Visualization</title>
-    <link rel="stylesheet" href="/static/css/style.css">
+    <title>RepoVis - Repository Treemap</title>
+    <link rel="stylesheet" href="css/style.css">
     <script src="https://d3js.org/d3.v7.min.js"></script>
 </head>
 <body>
-    <div id="app">
-        <!-- Header -->
+    <div class="container">
         <header>
-            <h1>repovis</h1>
-            <div id="metadata">
-                <span id="repo-name">Loading...</span>
-                <span id="stats"></span>
-            </div>
+            <h1>RepoVis - Repository Treemap Visualization</h1>
+            <div id="breadcrumb"></div>
         </header>
-
-        <!-- Controls -->
-        <div id="controls">
-            <div class="control-group">
-                <label>Time Range:</label>
-                <input type="date" id="start-date" />
-                <span>to</span>
-                <input type="date" id="end-date" />
-                <button id="apply-filters">Update</button>
-            </div>
-
-            <div class="control-group">
-                <label>Metric:</label>
-                <select id="metric-select">
-                    <option value="commit_count">Commits</option>
-                    <option value="lines_added">Lines Added</option>
-                    <option value="lines_deleted">Lines Deleted</option>
-                </select>
-            </div>
-
-            <div class="control-group">
-                <label>Contributors:</label>
-                <select id="contributor-select" multiple size="5">
-                    <option value="">All Contributors</option>
-                </select>
-            </div>
-
-            <div class="control-group">
-                <button id="reset-view">Reset View</button>
-                <span style="color: #b0b0b0; font-size: 0.85rem;">(Backspace to go back)</span>
-            </div>
+        
+        <div class="controls">
+            <button id="reset-btn">Reset View</button>
+            <select id="metric-select">
+                <option value="commit_count">Commit Count</option>
+                <option value="line_count">Line Count</option>
+                <option value="unique_contributors">Contributors</option>
+            </select>
         </div>
-
-        <!-- Timeline -->
-        <div id="timeline-container">
-            <svg id="timeline"></svg>
-        </div>
-
-        <!-- Main Visualization -->
-        <div id="visualization">
-            <svg id="sunburst"></svg>
-            <div id="legend">
-                <h3>Heat Map</h3>
-                <div class="legend-gradient"></div>
-                <div class="legend-labels">
-                    <span>Low</span>
-                    <span>High</span>
-                </div>
-            </div>
-        </div>
-
-        <!-- Info Panel -->
+        
+        <div id="treemap"></div>
+        
         <div id="info-panel">
             <h3>File Details</h3>
-            <div id="info-content">
-                <p>Click on a file or directory to see details</p>
-            </div>
+            <div id="file-info"></div>
         </div>
     </div>
-
-    <script src="/static/js/sunburst.js"></script>
+    
+    <script src="js/treemap.js"></script>
 </body>
 </html>

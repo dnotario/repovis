@@ -32,6 +32,18 @@ db_path: str = None
 web_dir: Path = None
 
 
+def setup_static_files():
+    """Setup static file serving - must be called after web_dir is set"""
+    if web_dir and web_dir.exists():
+        css_dir = web_dir / "css"
+        js_dir = web_dir / "js"
+        if css_dir.exists():
+            app.mount("/css", StaticFiles(directory=str(css_dir)), name="css")
+        if js_dir.exists():
+            app.mount("/js", StaticFiles(directory=str(js_dir)), name="js")
+        print(f"  Static files mounted from {web_dir}")
+
+
 def get_db():
     """Get database connection"""
     conn = sqlite3.connect(db_path)
@@ -333,12 +345,12 @@ def main():
     # Set web directory
     web_dir = Path(__file__).parent.parent / "web"
     
-    # Mount static files if web directory exists
-    if web_dir.exists():
-        app.mount("/static", StaticFiles(directory=web_dir), name="static")
+    # Setup static file serving before starting server
+    setup_static_files()
     
     print(f"Starting repovis server...")
     print(f"  Database: {db_path}")
+    print(f"  Web dir: {web_dir}")
     print(f"  URL: http://{args.host}:{args.port}")
     print(f"  API docs: http://{args.host}:{args.port}/docs")
     
