@@ -185,6 +185,7 @@ class TreemapVis {
                 .call(this.zoom.transform, d3.zoomIdentity);
             
             // Reset to root
+            this.currentDirectory = null;
             this.currentRoot = null;
             this.render();
         });
@@ -196,9 +197,27 @@ class TreemapVis {
     }
 
     buildHierarchy(files) {
+        // Filter files if we're zoomed into a directory
+        let filteredFiles = files;
+        if (this.currentDirectory) {
+            const dirPath = this.currentDirectory.endsWith('/') ? this.currentDirectory : this.currentDirectory + '/';
+            
+            // Find the directory node
+            const dirNode = files.find(f => f.path === dirPath || f.path === this.currentDirectory);
+            
+            if (dirNode) {
+                // Include the directory itself and all its descendants
+                filteredFiles = files.filter(f => 
+                    f.id === dirNode.id || 
+                    (f.path && f.path.startsWith(dirPath))
+                );
+                console.log(`Filtered to ${filteredFiles.length} files under ${this.currentDirectory}`);
+            }
+        }
+        
         // Create a map for quick lookup
         const fileMap = {};
-        files.forEach(f => {
+        filteredFiles.forEach(f => {
             fileMap[f.id] = {
                 ...f,
                 children: []
@@ -207,9 +226,9 @@ class TreemapVis {
 
         // Build hierarchy
         const roots = [];
-        files.forEach(f => {
+        filteredFiles.forEach(f => {
             const node = fileMap[f.id];
-            if (f.parent_id === null) {
+            if (f.parent_id === null || !fileMap[f.parent_id]) {
                 roots.push(node);
             } else if (fileMap[f.parent_id]) {
                 fileMap[f.parent_id].children.push(node);
@@ -221,7 +240,7 @@ class TreemapVis {
             return roots[0];
         } else {
             return {
-                name: 'root',
+                name: this.currentDirectory || 'root',
                 is_directory: true,
                 children: roots
             };
@@ -244,8 +263,11 @@ class TreemapVis {
             })
             .sort((a, b) => b.value - a.value);
 
-        // If we have a current root (zoomed in), use it
-        const displayRoot = this.currentRoot || root;
+        // Store root for reference
+        this.root = root;
+
+        // Use the root as display root (filtering already done in buildHierarchy)
+        const displayRoot = root;
 
         // Create treemap layout
         d3.treemap()
@@ -317,55 +339,62 @@ class TreemapVis {
     }
 
     clicked(d) {
+        console.log(`Clicked: ${d.data.name}, has children: ${!!d.children}, value: ${d.value}`);
+        
         if (d.children && d.value > 0) {
-            // Zoom into this directory (only if it has a value)
-            console.log(`Zooming into: ${d.data.name}, value: ${d.value}, children: ${d.children.length}`);
-            this.currentRoot = d;
+            // Zoom into this directory - filter to show only its contents
+            console.log(`Zooming into directory: ${d.data.name}, path: ${d.data.path}`);
+            this.currentDirectory = d.data.path || d.data.name;
             this.render();
         } else if (d.children && d.value === 0) {
-            // Directory with no metrics - show warning
-            console.log(`Cannot zoom into ${d.data.name}: no data for selected time range`);
-            alert(`No data available for "${d.data.name}" in the selected time range. Try selecting a different time period.`);
+            // Directory with no metrics
+            alert(`No data available for "${d.data.name}" in the selected time range.`);
         } else {
-            // Show file details
-            console.log(`Showing details for: ${d.data.name}, is_directory: ${d.data.is_directory}, value: ${d.value}`);
+            // File clicked - zoom to its parent directory
+            console.log(`File clicked: ${d.data.name}`);
+            if (d.parent && d.parent.data) {
+                this.currentDirectory = d.parent.data.path || d.parent.data.name;
+                this.render();
+            }
             this.showInfo(d);
         }
     }
 
     updateBreadcrumb(node) {
-        const path = [];
-        let current = node;
-        while (current) {
-            path.unshift(current.data.name || 'root');
-            current = current.parent;
-        }
-
         const breadcrumb = document.getElementById('breadcrumb');
-        breadcrumb.innerHTML = path.map((name, i) => {
-            if (i === path.length - 1) {
+        
+        if (!this.currentDirectory) {
+            breadcrumb.innerHTML = '<span style="color: #c9d1d9">root</span>';
+            return;
+        }
+        
+        // Split the path into parts
+        const pathParts = this.currentDirectory.split('/').filter(p => p);
+        const parts = ['root', ...pathParts];
+        
+        breadcrumb.innerHTML = parts.map((name, i) => {
+            if (i === parts.length - 1) {
+                // Current level - not clickable
                 return `<span style="color: #c9d1d9">${name}</span>`;
             }
+            // Clickable parent levels
             return `<span onclick="treemapVis.navigateToLevel(${i})">${name}</span>`;
         }).join(' / ');
     }
 
     navigateToLevel(level) {
         if (level === 0) {
-            this.currentRoot = null;
+            // Go to root
+            this.currentDirectory = null;
             this.render();
             return;
         }
-
-        // Navigate to specific level in hierarchy
-        let current = this.currentRoot;
-        let targetLevel = this.currentRoot ? this.currentRoot.depth : 0;
         
-        while (current && current.depth > level) {
-            current = current.parent;
-        }
-
-        this.currentRoot = current;
+        // Build path up to this level
+        const pathParts = this.currentDirectory.split('/').filter(p => p);
+        const targetPath = pathParts.slice(0, level).join('/') + '/';
+        
+        this.currentDirectory = targetPath;
         this.render();
     }
 
@@ -373,26 +402,33 @@ class TreemapVis {
         const info = document.getElementById('file-info');
         const data = d.data;
 
-        let html = `<div><strong>Name:</strong> ${data.name}</div>`;
-        html += `<div><strong>Type:</strong> ${data.is_directory ? 'Directory' : 'File'}</div>`;
-        html += `<div><strong>Path:</strong> ${data.path || 'N/A'}</div>`;
+        // Compact display on 2-3 lines
+        let parts = [];
         
-        if (data.metrics) {
-            html += `<div><strong>Commits:</strong> ${data.metrics.value || 0}</div>`;
-            html += `<div><strong>Lines:</strong> ${data.metrics.line_count || 0}</div>`;
-            html += `<div><strong>Contributors:</strong> ${data.metrics.unique_contributors || 0}</div>`;
-            
-            if (data.metrics.last_modified) {
-                const date = new Date(data.metrics.last_modified);
-                html += `<div><strong>Last Modified:</strong> ${date.toLocaleDateString()}</div>`;
+        // Line 1: Name and type
+        parts.push(`<strong>${data.name}</strong> (${data.is_directory ? 'Dir' : 'File'})`);
+        
+        // Line 2: Path
+        if (data.path) {
+            parts.push(`Path: ${data.path}`);
+        }
+        
+        // Line 3: Metrics (inline)
+        if (data.metrics || d.value) {
+            let metrics = [];
+            if (data.metrics) {
+                if (data.metrics.value) metrics.push(`Commits: ${data.metrics.value}`);
+                if (data.metrics.line_count) metrics.push(`Lines: ${data.metrics.line_count}`);
+                if (data.metrics.unique_contributors) metrics.push(`Contributors: ${data.metrics.unique_contributors}`);
+            } else if (d.value) {
+                metrics.push(`Total: ${d.value.toFixed(0)}`);
+            }
+            if (metrics.length > 0) {
+                parts.push(metrics.join(' • '));
             }
         }
-
-        if (d.value) {
-            html += `<div><strong>Total Value:</strong> ${d.value.toFixed(0)}</div>`;
-        }
-
-        info.innerHTML = html;
+        
+        info.innerHTML = parts.join('<br>');
     }
 }
 

@@ -23,28 +23,36 @@ header {
     border-bottom: 1px solid #30363d;
 }
 
+.header-top {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    margin-bottom: 10px;
+}
+
 h1 {
     font-size: 24px;
-    margin-bottom: 10px;
+    margin: 0;
+    flex: 1;
 }
 
 #breadcrumb {
     font-size: 14px;
     color: #8b949e;
-    margin-top: 10px;
     font-family: monospace;
+    margin-top: 10px;
 }
 
-#breadcrumb span {
-    cursor: pointer;
-    color: #58a6ff;
+#file-info {
+    font-size: 12px;
+    line-height: 1.4;
+    color: #8b949e;
+    margin-top: 8px;
 }
 
-#breadcrumb span:hover {
-    text-decoration: underline;
+#file-info strong {
+    color: #c9d1d9;
 }
-
-.controls {
     background: #161b22;
     padding: 15px 20px;
     border-bottom: 1px solid #30363d;
@@ -121,36 +129,3 @@ button:hover, select:hover {
     stroke-opacity: 0.8;
 }
 
-#info-panel {
-    position: fixed;
-    right: 20px;
-    top: 120px;
-    background: #161b22;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 20px;
-    width: 300px;
-    max-height: calc(100vh - 140px);
-    overflow-y: auto;
-}
-
-#info-panel h3 {
-    font-size: 16px;
-    margin-bottom: 15px;
-    color: #58a6ff;
-}
-
-#file-info {
-    font-size: 13px;
-    line-height: 1.6;
-}
-
-#file-info div {
-    margin-bottom: 10px;
-}
-
-#file-info strong {
-    color: #8b949e;
-    display: inline-block;
-    width: 120px;
-}
