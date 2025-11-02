@@ -68,6 +68,29 @@ button:hover, select:hover {
     border-color: #8b949e;
 }
 
+#timeline-container {
+    background: #161b22;
+    padding: 15px 20px;
+    border-bottom: 1px solid #30363d;
+}
+
+#timeline-container h3 {
+    font-size: 14px;
+    color: #8b949e;
+    margin-bottom: 10px;
+    font-weight: normal;
+}
+
+#timeline {
+    width: 100%;
+}
+
+.brush .selection {
+    fill: #58a6ff;
+    fill-opacity: 0.3;
+    stroke: #58a6ff;
+}
+
 #treemap {
     flex: 1;
     background: #0d1117;
@@ -92,6 +115,10 @@ button:hover, select:hover {
     fill: #c9d1d9;
     font-size: 11px;
     font-weight: 500;
+    paint-order: stroke fill;
+    stroke: #0d1117;
+    stroke-width: 0.5px;
+    stroke-opacity: 0.8;
 }
 
 #info-panel {
