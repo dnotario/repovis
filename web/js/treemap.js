@@ -261,30 +261,12 @@ class TreemapVis {
     }
 
     buildHierarchy(files) {
-        // Always use full file structure
+        // Always use full file structure - never filter
         const allFiles = this.fullTreeData || files;
-        
-        // Filter files if we're zoomed into a directory
-        let filteredFiles = allFiles;
-        if (this.currentDirectory) {
-            const dirPath = this.currentDirectory.endsWith('/') ? this.currentDirectory : this.currentDirectory + '/';
-            
-            // Find the directory node
-            const dirNode = allFiles.find(f => f.path === dirPath || f.path === this.currentDirectory);
-            
-            if (dirNode) {
-                // Include the directory itself and all its descendants
-                filteredFiles = allFiles.filter(f => 
-                    f.id === dirNode.id || 
-                    (f.path && f.path.startsWith(dirPath))
-                );
-                console.log(`Filtered to ${filteredFiles.length} files under ${this.currentDirectory}`);
-            }
-        }
         
         // Create a map for quick lookup and apply current metrics
         const fileMap = {};
-        filteredFiles.forEach(f => {
+        allFiles.forEach(f => {
             const key = f.path || f.name;
             const currentMetrics = this.metricsData ? this.metricsData[key] : f.metrics;
             
@@ -295,9 +277,9 @@ class TreemapVis {
             };
         });
 
-        // Build hierarchy
+        // Build hierarchy - always full tree
         const roots = [];
-        filteredFiles.forEach(f => {
+        allFiles.forEach(f => {
             const node = fileMap[f.id];
             if (f.parent_id === null || !fileMap[f.parent_id]) {
                 roots.push(node);
@@ -311,7 +293,7 @@ class TreemapVis {
             return roots[0];
         } else {
             return {
-                name: this.currentDirectory || 'root',
+                name: 'root',
                 is_directory: true,
                 children: roots
             };
@@ -321,14 +303,15 @@ class TreemapVis {
     render() {
         if (!this.treeData) return;
 
-        // Build hierarchy
+        // Build hierarchy - always full structure
         const hierarchyData = this.buildHierarchy(this.treeData);
         
-        // Create d3 hierarchy
+        // Create d3 hierarchy - size based on file count (always 1 per file)
         const root = d3.hierarchy(hierarchyData)
             .sum(d => {
+                // Each file = 1, directories = 0 (sum of children)
                 if (!d.is_directory) {
-                    return d.metrics ? d.metrics.value : 1;
+                    return 1;
                 }
                 return 0;
             })
@@ -337,7 +320,7 @@ class TreemapVis {
         // Store root for reference
         this.root = root;
 
-        // Use the root as display root (filtering already done in buildHierarchy)
+        // Use the root as display root - always show full tree
         const displayRoot = root;
 
         // Create treemap layout (use unit square [0,1] for better zoom behavior)
@@ -358,14 +341,20 @@ class TreemapVis {
             d => d.data.metrics.value
         ) || 1;
 
-        // Reverse the interpolator so red = high commits
-        const colorReversed = d3.scaleSequential()
-            .domain([maxValue, 0])  // Reversed domain
-            .interpolator(d3.interpolateRdYlGn)
-            .unknown('#30363d');
+        // Color scale: yellow for 0 commits, green to red for commits
+        const getColor = (value) => {
+            if (value === 0) return '#ffd700'; // Yellow for zero commits
+            const scale = d3.scaleSequential()
+                .domain([maxValue, 0])  // Reversed domain: red = high, green = low
+                .interpolator(d3.interpolateRdYlGn);
+            return scale(value);
+        };
 
         // Clear previous
         this.g.selectAll('*').remove();
+        
+        // Clear highlight layer on render (it will be redrawn on hover)
+        this.highlightLayer.selectAll('*').remove();
 
         console.log(`Rendering ${displayRoot.descendants().length} nodes, max value: ${maxValue}`);
 
@@ -399,11 +388,11 @@ class TreemapVis {
             .attr('fill', d => {
                 if (!d.children) {
                     // Files: full heatmap color
-                    return d.data.metrics ? colorReversed(d.data.metrics.value) : '#30363d';
+                    return d.data.metrics ? getColor(d.data.metrics.value) : '#30363d';
                 } else {
                     // Directories: lighter version of heatmap based on aggregated value
                     if (d.value > 0) {
-                        const baseColor = d3.color(colorReversed(d.value));  // Use total value
+                        const baseColor = d3.color(getColor(d.value));  // Use total value
                         baseColor.opacity = 0.3;  // Make it semi-transparent
                         return baseColor.toString();
                     }
@@ -430,33 +419,16 @@ class TreemapVis {
     }
 
     clicked(d) {
-        console.log(`Clicked: ${d.data.name}, has children: ${!!d.children}, value: ${d.value}`);
+        console.log(`Clicked: ${d.data.name}, has children: ${!!d.children}`);
         
-        if (d.children && d.value > 0) {
-            // Zoom into this directory - filter view, keep structure
-            console.log(`Zooming into directory: ${d.data.name}, path: ${d.data.path}`);
-            this.currentDirectory = d.data.path || d.data.name;
-            this.render(); // Rebuild to show only this subtree
-            
-            // After render completes, expand file tree to the clicked node
-            const nodePath = d.data.path || d.data.name;
-            this.expandAndScrollToNode(nodePath);
-        } else if (d.children && d.value === 0) {
-            // Directory with no metrics
-            alert(`No data available for "${d.data.name}" in the selected time range.`);
-        } else {
-            // File clicked - zoom to its parent directory
-            console.log(`File clicked: ${d.data.name}`);
-            if (d.parent && d.parent.data) {
-                this.currentDirectory = d.parent.data.path || d.parent.data.name;
-                this.render(); // Rebuild to show parent's subtree
-                
-                // Expand to the file's location
-                const nodePath = d.data.path || d.data.name;
-                this.expandAndScrollToNode(nodePath);
-            }
-            this.showInfo(d);
-        }
+        // Just expand tree view and update breadcrumb - don't change treemap geometry
+        const nodePath = d.data.path || d.data.name;
+        this.expandAndScrollToNode(nodePath);
+        
+        // Update breadcrumb to show what was clicked
+        const commitCount = (d.data.metrics && d.data.metrics.value) || 0;
+        const additionalMetrics = d.data.metrics || null;
+        this.setBreadcrumb(nodePath, !!d.children, commitCount, additionalMetrics);
     }
     
     resetZoomAndRender() {
@@ -477,7 +449,7 @@ class TreemapVis {
         
         if (!normalizedPath) {
             // Root level
-            breadcrumb.innerHTML = '<span style="color: #8b949e">root</span> / <span style="color: #58a6ff">root (Dir)</span>';
+            breadcrumb.innerHTML = '<span style="color: #58a6ff">root</span>';
             info.innerHTML = '';
             return;
         }
@@ -517,46 +489,55 @@ class TreemapVis {
     }
 
     updateBreadcrumb(node) {
-        const path = this.currentDirectory;
-        const isDirectory = node && node.children ? true : false;
-        const commitCount = (node && node.data && node.data.metrics && node.data.metrics.value) || 0;
-        const additionalMetrics = (node && node.data && node.data.metrics) || null;
+        // At root, show root
+        const path = null;
+        const isDirectory = true;
+        const commitCount = 0;
+        const additionalMetrics = null;
         
         this.setBreadcrumb(path, isDirectory, commitCount, additionalMetrics);
     }
 
     navigateToLevel(level) {
         if (level === 0) {
-            // Go to root
-            this.currentDirectory = null;
-            this.render(); // Don't reset zoom
+            // Go to root - just update breadcrumb
+            this.setBreadcrumb(null, true, 0, null);
             return;
         }
         
-        // Build path up to this level
-        const pathParts = this.currentDirectory.split('/').filter(p => p);
-        const targetPath = pathParts.slice(0, level).join('/') + '/';
-        
-        this.currentDirectory = targetPath;
-        this.render(); // Don't reset zoom
+        // This function is called from breadcrumb clicks - just update the breadcrumb display
+        // The treemap geometry stays the same
     }
     
     updateColors() {
         // Update only the fill colors of rectangles based on new metrics
         if (!this.root) return;
         
-        const displayRoot = this.currentRoot || this.root;
+        // First, update the metrics in the hierarchy data
+        this.root.each(node => {
+            if (node.data) {
+                const key = node.data.path || node.data.name;
+                const currentMetrics = this.metricsData ? this.metricsData[key] : null;
+                node.data.metrics = currentMetrics;
+            }
+        });
         
         // Recalculate max value with new metrics
         const maxValue = d3.max(
-            displayRoot.descendants().filter(d => !d.children && d.data.metrics), 
+            this.root.descendants().filter(d => !d.children && d.data.metrics), 
             d => d.data.metrics.value
         ) || 1;
         
-        const colorReversed = d3.scaleSequential()
-            .domain([maxValue, 0])
-            .interpolator(d3.interpolateRdYlGn)
-            .unknown('#30363d');
+        console.log(`Updating colors, max value: ${maxValue}`);
+        
+        // Color scale: yellow for 0 commits, green to red for commits
+        const getColor = (value) => {
+            if (value === 0) return '#ffd700'; // Yellow for zero commits
+            const scale = d3.scaleSequential()
+                .domain([maxValue, 0])  // Reversed domain: red = high, green = low
+                .interpolator(d3.interpolateRdYlGn);
+            return scale(value);
+        };
         
         // Update rectangle fills
         this.g.selectAll('rect')
@@ -568,11 +549,18 @@ class TreemapVis {
                 
                 if (!node.children) {
                     // Files
-                    return node.data.metrics ? colorReversed(node.data.metrics.value) : '#30363d';
+                    return node.data.metrics ? getColor(node.data.metrics.value) : '#30363d';
                 } else {
-                    // Directories
-                    if (node.value > 0) {
-                        const baseColor = d3.color(colorReversed(node.value));
+                    // Directories - calculate sum of children's metrics
+                    let totalCommits = 0;
+                    node.each(child => {
+                        if (!child.children && child.data.metrics) {
+                            totalCommits += child.data.metrics.value;
+                        }
+                    });
+                    
+                    if (totalCommits > 0) {
+                        const baseColor = d3.color(getColor(totalCommits));
                         baseColor.opacity = 0.3;
                         return baseColor.toString();
                     }
@@ -580,7 +568,7 @@ class TreemapVis {
                 }
             });
         
-        console.log(`Colors updated, max value: ${maxValue}`);
+        console.log(`Colors updated successfully`);
     }
 
     showInfo(d) {
@@ -744,6 +732,12 @@ class TreemapVis {
                         e.stopPropagation();
                         this.navigateToPath(path);
                     });
+                    
+                    // Double-click zooms to the directory
+                    nameSpan.addEventListener('dblclick', (e) => {
+                        e.stopPropagation();
+                        this.zoomToNode(path);
+                    });
                 }
             } else {
                 // Click on file navigates to it
@@ -752,6 +746,64 @@ class TreemapVis {
                 });
             }
         });
+    }
+    
+    zoomToNode(path) {
+        if (!this.root) return;
+        
+        // Normalize path
+        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        
+        // Find the node in the hierarchy
+        let targetNode = null;
+        this.root.each(node => {
+            if (node.data) {
+                const nodePath = node.data.path || node.data.name;
+                const normalizedNodePath = nodePath && nodePath.endsWith('/') ? nodePath.slice(0, -1) : nodePath;
+                
+                if (normalizedNodePath === normalizedPath || nodePath === path) {
+                    targetNode = node;
+                }
+            }
+        });
+        
+        if (!targetNode) {
+            console.log('zoomToNode: target not found', path);
+            return;
+        }
+        
+        console.log('Zooming to node:', targetNode.data.name, 'bounds:', targetNode.x0, targetNode.y0, targetNode.x1, targetNode.y1);
+        
+        // Clear highlight before zooming
+        this.clearTreemapHighlight();
+        
+        // Calculate the transform to zoom to this node
+        // The node bounds are in [0,1] space from the treemap layout
+        const x0 = targetNode.x0;
+        const y0 = targetNode.y0;
+        const x1 = targetNode.x1;
+        const y1 = targetNode.y1;
+        
+        // Calculate scale to fit the node in the viewport
+        const nodeWidth = x1 - x0;
+        const nodeHeight = y1 - y0;
+        
+        // Add some padding (90% of viewport)
+        const scale = Math.min(0.9 / nodeWidth, 0.9 / nodeHeight);
+        
+        // Calculate translation to center the node
+        const translateX = this.width / 2 - (x0 + nodeWidth / 2) * this.width * scale;
+        const translateY = this.height / 2 - (y0 + nodeHeight / 2) * this.height * scale;
+        
+        // Create the transform
+        const transform = d3.zoomIdentity
+            .translate(translateX, translateY)
+            .scale(scale);
+        
+        // Apply the transform with animation
+        this.svg.transition()
+            .duration(750)
+            .call(this.zoom.transform, transform);
     }
     
     highlightNodeInTreemap(path) {
@@ -929,17 +981,13 @@ class TreemapVis {
         const file = this.treeData.find(f => f.path === path || f.name === path);
         if (!file) return;
         
-        if (file.is_directory) {
-            this.currentDirectory = path;
-        } else {
-            // Navigate to parent
-            const parent = this.treeData.find(f => f.id === file.parent_id);
-            if (parent) {
-                this.currentDirectory = parent.path || parent.name;
-            }
-        }
+        // Just expand the tree view and update breadcrumb - don't change treemap
+        this.expandAndScrollToNode(path);
         
-        this.render();
+        // Update breadcrumb
+        const commitCount = this.metricsData && this.metricsData[path] ? this.metricsData[path].value : 0;
+        const additionalMetrics = this.metricsData && this.metricsData[path] ? this.metricsData[path] : null;
+        this.setBreadcrumb(path, file.is_directory, commitCount, additionalMetrics);
     }
     
     expandAndScrollToNode(targetPath) {
