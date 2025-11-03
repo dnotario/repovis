@@ -252,11 +252,8 @@ class TreemapVis {
                 end: this.dateRange.max_date
             };
             
-            // Update time range display
-            this.updateTimeRangeDisplay();
-            
             // Create timeline visualization
-            const margin = {top: 10, right: 20, bottom: 30, left: 20};
+            const margin = {top: 20, right: 20, bottom: 20, left: 20};
             const width = document.getElementById('timeline').clientWidth - margin.left - margin.right;
             const height = 80 - margin.top - margin.bottom;
             
@@ -299,6 +296,11 @@ class TreemapVis {
                 .call(d3.axisBottom(x).ticks(5))
                 .style('color', '#8b949e');
             
+            // Store references for updating
+            this.timelineSvg = svg;
+            this.timelineX = x;
+            this.timelineHeight = height;
+            
             // Brush for selection with drag support
             const brush = d3.brushX()
                 .extent([[0, 0], [width, height]])
@@ -313,8 +315,8 @@ class TreemapVis {
                         end: endDate.toISOString().split('T')[0]
                     };
                     
-                    // Update time range display
-                    this.updateTimeRangeDisplay();
+                    // Update time range labels on timeline
+                    this.updateTimelineRangeLabels();
                     
                     // Request update immediately - queuing handles max 1 outstanding request
                     const contributorIds = Array.from(this.selectedContributors);
@@ -325,6 +327,9 @@ class TreemapVis {
                 .attr('class', 'brush')
                 .call(brush)
                 .call(brush.move, [0, width]); // Select all by default
+            
+            // Initial range labels
+            this.updateTimelineRangeLabels();
                 
         } catch (error) {
             console.error('Error setting up timeline:', error);
@@ -1292,11 +1297,41 @@ class TreemapVis {
         );
     }
     
-    updateTimeRangeDisplay() {
-        const timeRangeEl = document.getElementById('time-range');
-        if (timeRangeEl && this.selectedDateRange) {
-            timeRangeEl.textContent = `Time range: ${this.selectedDateRange.start} to ${this.selectedDateRange.end}`;
-        }
+    updateTimelineRangeLabels() {
+        if (!this.timelineSvg || !this.selectedDateRange || !this.timelineX) return;
+        
+        // Remove existing labels
+        this.timelineSvg.selectAll('.range-label').remove();
+        
+        // Parse dates
+        const startDate = new Date(this.selectedDateRange.start);
+        const endDate = new Date(this.selectedDateRange.end);
+        
+        // Get x positions
+        const x0 = this.timelineX(startDate);
+        const x1 = this.timelineX(endDate);
+        
+        // Add start date label
+        this.timelineSvg.append('text')
+            .attr('class', 'range-label')
+            .attr('x', x0)
+            .attr('y', -8)
+            .attr('text-anchor', 'start')
+            .attr('fill', '#58a6ff')
+            .attr('font-size', '11px')
+            .attr('font-family', 'monospace')
+            .text(this.selectedDateRange.start);
+        
+        // Add end date label
+        this.timelineSvg.append('text')
+            .attr('class', 'range-label')
+            .attr('x', x1)
+            .attr('y', -8)
+            .attr('text-anchor', 'end')
+            .attr('fill', '#58a6ff')
+            .attr('font-size', '11px')
+            .attr('font-family', 'monospace')
+            .text(this.selectedDateRange.end);
     }
 }
 
