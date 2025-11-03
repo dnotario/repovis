@@ -21,26 +21,35 @@ import uvicorn
 
 
 class RepoVis:
-    def __init__(self, repo_path: str):
+    def __init__(self, repo_path: str, since: str = None, until: str = None):
         self.repo_path = Path(repo_path).resolve()
         self.repo = None
         self.db_path = None
         self.conn = None
         self.cursor = None
+        self.since = since
+        self.until = until
         
         # In-memory caches for lookups
         self.file_cache = {}
         self.contributor_cache = {}
         
     def get_cache_db_path(self) -> Path:
-        """Generate cache DB path: .repovis/reponame_gitdirhash.db"""
+        """Generate cache DB path: .repovis/reponame_gitdirhash[_dates].db"""
         repo_name = self.repo_path.name
         git_dir_hash = hashlib.sha256(str(self.repo_path).encode()).hexdigest()[:16]
         
         cache_dir = self.repo_path / ".repovis"
         cache_dir.mkdir(exist_ok=True)
         
-        db_name = f"{repo_name}_{git_dir_hash}.db"
+        # Include date range in filename if specified
+        if self.since or self.until:
+            since_str = self.since.replace('-', '') if self.since else 'start'
+            until_str = self.until.replace('-', '') if self.until else 'end'
+            db_name = f"{repo_name}_{git_dir_hash}_{since_str}_{until_str}.db"
+        else:
+            db_name = f"{repo_name}_{git_dir_hash}.db"
+        
         return cache_dir / db_name
     
     def open_repo(self):
@@ -123,17 +132,29 @@ class RepoVis:
               commit_count, lines_added, lines_deleted))
     
     def process_commits(self):
-        """Process all commits in the repository"""
+        """Process commits in the repository (optionally filtered by date range)"""
         print("Counting commits...")
         
         try:
-            commits = list(self.repo.iter_commits('--all'))
+            # Build iter_commits arguments
+            kwargs = {}
+            if self.since:
+                kwargs['since'] = self.since
+            if self.until:
+                kwargs['until'] = self.until
+            
+            commits = list(self.repo.iter_commits('--all', **kwargs))
         except Exception as e:
             print(f"Error getting commits: {e}", file=sys.stderr)
             sys.exit(1)
         
+        if self.since or self.until:
+            date_info = f" (from {self.since or 'beginning'} to {self.until or 'now'})"
+        else:
+            date_info = ""
+        
         total_commits = len(commits)
-        print(f"Processing {total_commits} commits...")
+        print(f"Processing {total_commits} commits{date_info}...")
         
         processed = 0
         commit_batch = []
@@ -224,6 +245,12 @@ class RepoVis:
             'total_files': len(self.file_cache)
         }
         
+        # Add date range if specified
+        if self.since:
+            metadata['date_range_since'] = self.since
+        if self.until:
+            metadata['date_range_until'] = self.until
+        
         for key, value in metadata.items():
             self.cursor.execute(
                 "INSERT OR REPLACE INTO metadata (key, value) VALUES (?, ?)",
@@ -232,6 +259,53 @@ class RepoVis:
         
         self.conn.commit()
     
+    def add_current_files(self):
+        """Add current files and remove deleted files"""
+        print("Syncing with current working tree...")
+        
+        # Collect all current files
+        current_files = set()
+        
+        def walk_tree(tree, path=""):
+            """Recursively walk git tree and collect current files"""
+            for item in tree:
+                item_path = f"{path}{item.name}"
+                
+                if item.type == 'tree':
+                    # It's a directory
+                    dir_path = item_path + '/'
+                    current_files.add(dir_path)
+                    self.get_or_create_file(dir_path)
+                    # Recurse into subdirectory
+                    walk_tree(item, item_path + '/')
+                else:
+                    # It's a file (blob)
+                    current_files.add(item_path)
+                    self.get_or_create_file(item_path)
+        
+        try:
+            head_tree = self.repo.head.commit.tree
+            walk_tree(head_tree)
+            
+            # Find and delete files that no longer exist
+            all_cached = set(self.file_cache.keys())
+            deleted_files = all_cached - current_files
+            
+            if deleted_files:
+                print(f"  Removing {len(deleted_files)} deleted files from database...")
+                for file_path in deleted_files:
+                    file_id = self.file_cache.get(file_path)
+                    if file_id:
+                        # Delete file and its metrics
+                        self.cursor.execute("DELETE FROM file_metrics WHERE file_id = ?", (file_id,))
+                        self.cursor.execute("DELETE FROM files WHERE id = ?", (file_id,))
+                        del self.file_cache[file_path]
+            
+            self.conn.commit()
+            print(f"  Total current files/directories: {len(self.file_cache)}")
+        except Exception as e:
+            print(f"Warning: Could not sync current files: {e}")
+    
     def preprocess(self):
         """Run preprocessing pipeline"""
         try:
@@ -239,6 +313,7 @@ class RepoVis:
             self.db_path = self.get_cache_db_path()
             self.initialize_db()
             self.process_commits()
+            self.add_current_files()
             self.save_metadata()
             
             print(f"\n✓ Successfully preprocessed repository")
@@ -500,10 +575,18 @@ def main():
         default='127.0.0.1',
         help='Host to bind to (default: 127.0.0.1)'
     )
+    parser.add_argument(
+        '--since',
+        help='Only process commits since this date (e.g., "2024-01-01", "6 months ago")'
+    )
+    parser.add_argument(
+        '--until',
+        help='Only process commits until this date (e.g., "2024-12-31", "yesterday")'
+    )
     
     args = parser.parse_args()
     
-    repovis = RepoVis(args.repo_path)
+    repovis = RepoVis(args.repo_path, since=args.since, until=args.until)
     
     # Check if DB exists
     db_path = repovis.get_cache_db_path()

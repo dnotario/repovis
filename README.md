@@ -64,6 +64,8 @@ python3 repovis.py [REPO_PATH] [OPTIONS]
 - `--preprocess-only`: Only preprocess, do not start server
 - `--port, -p PORT`: Port to run server on (default: 8000)
 - `--host HOST`: Host to bind to (default: 127.0.0.1)
+- `--since DATE`: Only process commits since this date (e.g., "2024-01-01", "6 months ago")
+- `--until DATE`: Only process commits until this date (e.g., "2024-12-31", "yesterday")
 
 ### Examples
 
@@ -77,6 +79,15 @@ python3 repovis.py ~/projects/linux
 # Force rebuild and use custom port
 python3 repovis.py ~/projects/linux --rebuild --port 3000
 
+# Process only recent commits (faster for large repos)
+python3 repovis.py --since "2024-01-01"
+
+# Process commits in a specific range
+python3 repovis.py --since "2024-01-01" --until "2024-06-30"
+
+# Process last 6 months
+python3 repovis.py --since "6 months ago"
+
 # Only preprocess, don't start server
 python3 repovis.py ~/projects/linux --preprocess-only
 
@@ -86,15 +97,17 @@ python3 repovis.py --host 0.0.0.0
 
 ### How It Works
 
-1. **First run**: Preprocesses the repository and creates a cached database at `.repovis/{reponame}_{hash}.db`
+1. **First run**: Preprocesses the repository and creates a cached database at `.repovis/{reponame}_{hash}[_dates].db`
 2. **Subsequent runs**: Uses the cached database for instant startup
 3. **Updates**: Use `--rebuild` to regenerate the database after new commits
+4. **Date ranges**: Using `--since`/`--until` creates a separate cache file for that range
 
 The tool automatically:
-- Detects if a cached database exists
+- Detects if a cached database exists (matching repo path and date range)
 - Uses the cache for fast startup
-- Rebuilds when `--rebuild` is specified
+- Rebuilds when `--rebuild` is specified or cache doesn't exist
 - Stores cache in `.repovis/` directory (add to `.gitignore`)
+- Includes all current files, even those with no commits in the date range
 
 ## How to Use the Visualization
 
@@ -150,19 +163,27 @@ The tool generates a SQLite database in `.repovis/` with the following structure
 
 ## Cache Management
 
-- **Location**: `.repovis/{reponame}_{gitdirhash}.db` in repository root
-- **Naming**: Combines repo name and path hash for uniqueness
+- **Location**: `.repovis/{reponame}_{gitdirhash}[_dates].db` in repository root
+- **Naming**: Combines repo name, path hash, and optional date range for uniqueness
+- **Date ranges**: Each date range gets its own cache file
 - **Rebuild**: Always performs full rebuild (no incremental updates)
-- **Cleanup**: Safe to delete `.repovis/` directory to clear cache
+- **Cleanup**: Safe to delete `.repovis/` directory to clear all caches
+
+**Examples**:
+- Full history: `repovis_301db260b98467d5.db`
+- Since date: `repovis_301db260b98467d5_20240101_end.db`
+- Date range: `repovis_301db260b98467d5_20240101_20240630.db`
 
 **Tip**: Add `.repovis/` to your `.gitignore`
 
 ## Performance Tips
 
-- For very large repositories (>100k commits), preprocessing may take 10-30 minutes
+- For very large repositories (>100k commits), use `--since` to limit preprocessing time
+- Date range filtering can reduce preprocessing from 30 minutes to seconds
 - The web interface handles repositories with thousands of files efficiently
 - Filtering by contributors or time range happens server-side via SQL queries
 - Only visible tiles are rendered in the treemap for optimal performance
+- All current files are included even with date filtering (shows 0 activity if no commits in range)
 
 ## Troubleshooting
 
