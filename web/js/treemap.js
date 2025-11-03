@@ -432,6 +432,10 @@ class TreemapVis {
     clicked(d) {
         console.log(`Clicked: ${d.data.name}, has children: ${!!d.children}, value: ${d.value}`);
         
+        // Expand file tree to the clicked node
+        const nodePath = d.data.path || d.data.name;
+        this.expandAndScrollToNode(nodePath);
+        
         if (d.children && d.value > 0) {
             // Zoom into this directory - filter view, keep structure
             console.log(`Zooming into directory: ${d.data.name}, path: ${d.data.path}`);
@@ -932,6 +936,61 @@ class TreemapVis {
         }
         
         this.render();
+    }
+    
+    expandAndScrollToNode(targetPath) {
+        if (!this.explorerTreeData) return;
+        
+        // Normalize path
+        const normalizedPath = targetPath.endsWith('/') ? targetPath.slice(0, -1) : targetPath;
+        
+        // Find the target node
+        const targetNode = this.explorerTreeData.find(f => {
+            const fp = f.path.endsWith('/') ? f.path.slice(0, -1) : f.path;
+            return fp === normalizedPath || f.path === targetPath;
+        });
+        
+        if (!targetNode) {
+            console.log('expandAndScrollToNode: target not found', targetPath);
+            return;
+        }
+        
+        // Build path from root to target by traversing parents
+        const pathToExpand = [];
+        let currentId = targetNode.parent_id;
+        
+        while (currentId) {
+            const parentNode = this.explorerTreeData.find(f => f.id === currentId);
+            if (!parentNode) break;
+            
+            const parentPath = parentNode.path.endsWith('/') ? parentNode.path.slice(0, -1) : parentNode.path;
+            pathToExpand.unshift(parentPath);
+            currentId = parentNode.parent_id;
+        }
+        
+        console.log('Expanding path:', pathToExpand);
+        
+        // Add all parent paths to expandedNodes
+        pathToExpand.forEach(path => this.expandedNodes.add(path));
+        
+        // Re-render the tree view
+        this.renderTreeView(this.currentFilter || '');
+        
+        // Scroll to the target node
+        setTimeout(() => {
+            const treeView = document.getElementById('tree-view');
+            const targetElement = treeView.querySelector(`[data-path="${targetPath}"]`) || 
+                                   treeView.querySelector(`[data-path="${normalizedPath}"]`);
+            
+            if (targetElement) {
+                targetElement.scrollIntoView({ behavior: 'smooth', block: 'center' });
+                // Briefly highlight the target
+                targetElement.style.backgroundColor = '#1f6feb';
+                setTimeout(() => {
+                    targetElement.style.backgroundColor = '';
+                }, 1000);
+            }
+        }, 100);
     }
 }
 
