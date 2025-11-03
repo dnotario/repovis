@@ -648,15 +648,23 @@ class TreemapVis {
         console.log(`Rendered ${nodeCount} tree nodes`);
         treeView.innerHTML = html;
         
-        // Add click handlers
+        // Add click and hover handlers
         treeView.querySelectorAll('.tree-node').forEach(node => {
             const hasChildren = node.getAttribute('data-has-children') === 'true';
+            const path = node.getAttribute('data-path');
+            
+            // Hover handlers - highlight in treemap
+            node.addEventListener('mouseenter', () => {
+                this.highlightNodeInTreemap(path);
+            });
+            
+            node.addEventListener('mouseleave', () => {
+                this.clearTreemapHighlight();
+            });
             
             if (hasChildren) {
                 // Click on chevron or directory name toggles expand/collapse
                 node.addEventListener('click', (e) => {
-                    const path = node.getAttribute('data-path');
-                    
                     if (this.expandedNodes.has(path)) {
                         this.expandedNodes.delete(path);
                     } else {
@@ -669,11 +677,47 @@ class TreemapVis {
             } else {
                 // Click on file navigates to it
                 node.addEventListener('click', () => {
-                    const path = node.getAttribute('data-path');
                     this.navigateToPath(path);
                 });
             }
         });
+    }
+    
+    highlightNodeInTreemap(path) {
+        if (!this.svg) return;
+        
+        // Normalize path (remove trailing slash for comparison)
+        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        
+        // Find and highlight the matching node
+        this.svg.selectAll('rect')
+            .each(function(d) {
+                const rect = d3.select(this);
+                if (d && d.data) {
+                    const nodePath = d.data.path;
+                    const normalizedNodePath = nodePath && nodePath.endsWith('/') ? nodePath.slice(0, -1) : nodePath;
+                    
+                    if (normalizedNodePath === normalizedPath) {
+                        // Highlight this rectangle
+                        rect.style('stroke', '#58a6ff')
+                            .style('stroke-width', '3px')
+                            .style('opacity', 1);
+                    } else {
+                        // Dim others
+                        rect.style('opacity', 0.3);
+                    }
+                }
+            });
+    }
+    
+    clearTreemapHighlight() {
+        if (!this.svg) return;
+        
+        // Remove all highlighting
+        this.svg.selectAll('rect')
+            .style('stroke', null)
+            .style('stroke-width', null)
+            .style('opacity', 1);
     }
     
     buildHierarchyForTree(files) {
