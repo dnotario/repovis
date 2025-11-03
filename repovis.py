@@ -130,75 +130,159 @@ class RepoVis:
     
     def process_commits(self):
         """Process commits in the repository (optionally filtered by date range)"""
-        print("Counting commits...")
+        print("Processing commits...")
         
-        try:
-            # Build iter_commits arguments
-            kwargs = {}
-            if self.since:
-                kwargs['since'] = self.since
-            if self.until:
-                kwargs['until'] = self.until
-            
-            commits = list(self.repo.iter_commits('--all', **kwargs))
-        except Exception as e:
-            print(f"Error getting commits: {e}", file=sys.stderr)
-            sys.exit(1)
+        # Build git log command for single-pass processing
+        git_cmd = ['git', 'log', '--all', '--pretty=format:%H%x00%an%x00%ae%x00%at%x00%s', '--name-only', '--no-merges']
+        
+        if self.since:
+            git_cmd.append(f'--since={self.since}')
+        if self.until:
+            git_cmd.append(f'--until={self.until}')
         
         if self.since or self.until:
             date_info = f" (from {self.since or 'beginning'} to {self.until or 'now'})"
         else:
             date_info = ""
         
-        total_commits = len(commits)
-        print(f"Processing {total_commits} commits{date_info}...")
+        print(f"Running git log{date_info}...")
+        
+        import subprocess
+        result = subprocess.run(git_cmd, cwd=self.repo_path, capture_output=True, text=True)
+        if result.returncode != 0:
+            print(f"Error running git log: {result.stderr}", file=sys.stderr)
+            sys.exit(1)
+        
+        # Parse output
+        lines = result.stdout.strip().split('\n')
         
         processed = 0
         commit_batch = []
+        file_batch = set()
+        metrics_accumulator = defaultdict(int)  # {(file_path, contributor_id, date): count}
         
-        for commit in tqdm(commits, desc="Processing commits"):
-            try:
-                author_name = commit.author.name
-                author_email = commit.author.email
+        i = 0
+        total_lines = len(lines)
+        
+        with tqdm(total=total_lines, desc="Processing commits", unit=" lines") as pbar:
+            while i < total_lines:
+                if not lines[i]:
+                    i += 1
+                    pbar.update(1)
+                    continue
+                
+                # Parse commit header: SHA\0name\0email\0timestamp\0message
+                parts = lines[i].split('\x00')
+                if len(parts) < 5:
+                    i += 1
+                    pbar.update(1)
+                    continue
+                
+                sha, author_name, author_email, timestamp, message = parts[0], parts[1], parts[2], parts[3], '\x00'.join(parts[4:])
                 contributor_id = self.get_or_create_contributor(author_name, author_email)
                 
-                commit_date = datetime.fromtimestamp(commit.committed_date)
+                commit_date = datetime.fromtimestamp(int(timestamp))
                 date_str = commit_date.strftime('%Y-%m-%d')
                 
-                commit_batch.append((
-                    commit.hexsha,
-                    contributor_id,
-                    date_str,
-                    commit.message[:500]
-                ))
+                commit_batch.append((sha, contributor_id, date_str, message[:500]))
                 
-                # Use commit.stats for fast file extraction (no diff parsing needed)
-                for file_path in commit.stats.files.keys():
-                    file_id = self.get_or_create_file(file_path)
-                    self.update_metrics(file_id, contributor_id, date_str, commit_count=1)
+                # Get file list (lines after commit header until blank line or next commit)
+                i += 1
+                pbar.update(1)
+                
+                while i < total_lines and lines[i] and not '\x00' in lines[i]:
+                    file_path = lines[i].strip()
+                    if file_path:
+                        if file_path not in self.file_cache:
+                            file_batch.add(file_path)
+                        
+                        key = (file_path, contributor_id, date_str)
+                        metrics_accumulator[key] += 1
+                    
+                    i += 1
+                    pbar.update(1)
                 
                 processed += 1
                 
+                # Batch commit every 1000 commits
                 if processed % 1000 == 0:
-                    self.cursor.executemany(
-                        "INSERT OR IGNORE INTO commits (sha, author_id, date, message) VALUES (?, ?, ?, ?)",
-                        commit_batch
-                    )
+                    self._batch_commit_data(commit_batch, file_batch, metrics_accumulator)
                     commit_batch = []
-                    self.conn.commit()
-                    
-            except Exception as e:
-                print(f"\nWarning: Error processing commit {commit.hexsha[:8]}: {e}")
-                continue
+                    file_batch = set()
+                    metrics_accumulator.clear()
         
+        # Final batch
+        if commit_batch:
+            self._batch_commit_data(commit_batch, file_batch, metrics_accumulator)
+        
+        print(f"\nProcessed {processed} commits")
+    
+    def _batch_commit_data(self, commit_batch, file_batch, metrics_accumulator):
+        """Commit batched data to database"""
         if commit_batch:
             self.cursor.executemany(
                 "INSERT OR IGNORE INTO commits (sha, author_id, date, message) VALUES (?, ?, ?, ?)",
                 commit_batch
             )
-        self.conn.commit()
         
-        print(f"\nProcessed {processed} commits")
+        if file_batch:
+            self._batch_insert_files(list(file_batch))
+        
+        if metrics_accumulator:
+            self._batch_insert_metrics(metrics_accumulator)
+        
+        self.conn.commit()
+    
+    def _batch_insert_files(self, file_paths):
+        """Batch insert files with their parent directories"""
+        all_paths = set()
+        for path in file_paths:
+            all_paths.add(path)
+            # Add all parent directories
+            parts = path.rstrip('/').split('/')
+            for i in range(1, len(parts)):
+                parent = '/'.join(parts[:i]) + '/'
+                all_paths.add(parent)
+        
+        # Sort by depth (parents first)
+        sorted_paths = sorted(all_paths, key=lambda p: p.count('/'))
+        
+        for path in sorted_paths:
+            if path not in self.file_cache:
+                is_directory = path.endswith('/')
+                clean_path = path.rstrip('/')
+                
+                parent_id = None
+                if '/' in clean_path:
+                    parent_path = '/'.join(clean_path.split('/')[:-1]) + '/'
+                    parent_id = self.file_cache.get(parent_path)
+                
+                name = clean_path.split('/')[-1] if '/' in clean_path else clean_path
+                
+                self.cursor.execute(
+                    "INSERT OR IGNORE INTO files (path, parent_id, name, is_directory) VALUES (?, ?, ?, ?)",
+                    (path, parent_id, name, is_directory)
+                )
+                self.cursor.execute("SELECT id FROM files WHERE path = ?", (path,))
+                result = self.cursor.fetchone()
+                if result:
+                    self.file_cache[path] = result[0]
+    
+    def _batch_insert_metrics(self, metrics_accumulator):
+        """Batch insert/update metrics"""
+        metrics_batch = []
+        for (file_path, contributor_id, date_str), count in metrics_accumulator.items():
+            file_id = self.file_cache.get(file_path)
+            if file_id:
+                metrics_batch.append((file_id, contributor_id, date_str, count, count))
+        
+        if metrics_batch:
+            self.cursor.executemany("""
+                INSERT INTO file_metrics (file_id, contributor_id, date, commit_count, lines_added, lines_deleted)
+                VALUES (?, ?, ?, ?, 0, 0)
+                ON CONFLICT(file_id, contributor_id, date) 
+                DO UPDATE SET commit_count = commit_count + ?
+            """, metrics_batch)
     
     def save_metadata(self):
         """Save repository metadata"""
