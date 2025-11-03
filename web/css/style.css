@@ -209,7 +209,7 @@ button:hover, select:hover {
 
 #timeline-container {
     background: #161b22;
-    padding: 15px 20px;
+    padding: 10px 20px;
     border-top: 1px solid #30363d;
 }
 
@@ -226,11 +226,50 @@ button:hover, select:hover {
 
 .brush .selection {
     fill: #58a6ff;
-    fill-opacity: 0.3;
+    fill-opacity: 0.2;
     stroke: #58a6ff;
+    stroke-opacity: 0.4;
     cursor: move;
 }
 
 .brush .handle {
     cursor: ew-resize;
+}
+
+/* Toggle button - make it visible when collapsed */
+#toggle-explorer-collapsed {
+    position: fixed;
+    left: 0;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-left: none;
+    border-radius: 0 4px 4px 0;
+    padding: 8px 6px;
+    color: #8b949e;
+    cursor: pointer;
+    z-index: 1000;
+    font-size: 16px;
+}
+
+#toggle-explorer-collapsed:hover {
+    color: #c9d1d9;
+    background: #30363d;
+}
+
+#toggle-explorer {
+    background: transparent;
+    border: none;
+    color: #8b949e;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+    transition: all 0.2s;
+}
+
+#toggle-explorer:hover {
+    color: #c9d1d9;
+    background: #21262d;
+    border-radius: 4px;
 }

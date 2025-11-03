@@ -19,7 +19,7 @@ class TreemapVis {
         // Get date range from timeline first (more efficient)
         await this.getDateRangeFromTimeline();
         
-        // Load file structure (this never changes)
+        // Load file structure (this never changes) - but don't use it for tree explorer
         await this.loadFileStructure();
         
         // Load metrics for initial time range
@@ -36,7 +36,7 @@ class TreemapVis {
         // Setup controls
         this.setupControls();
         
-        // Setup tree explorer
+        // Setup tree explorer (loads its own data)
         this.setupTreeExplorer();
         
         // Initial render - builds structure once
@@ -431,9 +431,11 @@ class TreemapVis {
 
     updateBreadcrumb(node) {
         const breadcrumb = document.getElementById('breadcrumb');
+        const info = document.getElementById('file-info');
         
         if (!this.currentDirectory) {
-            breadcrumb.innerHTML = '<span style="color: #c9d1d9">root</span>';
+            breadcrumb.innerHTML = '<span style="color: #c9d1d9">root (Dir)</span>';
+            info.innerHTML = '';
             return;
         }
         
@@ -441,14 +443,31 @@ class TreemapVis {
         const pathParts = this.currentDirectory.split('/').filter(p => p);
         const parts = ['root', ...pathParts];
         
+        // Determine if current level is a directory or file
+        const currentNode = node;
+        const isDirectory = currentNode && currentNode.children ? true : false;
+        const typeLabel = isDirectory ? 'Dir' : 'File';
+        
         breadcrumb.innerHTML = parts.map((name, i) => {
             if (i === parts.length - 1) {
-                // Current level - not clickable
-                return `<span style="color: #c9d1d9">${name}</span>`;
+                // Current level - not clickable, with type indicator
+                return `<span style="color: #c9d1d9">${name} (${typeLabel})</span>`;
             }
             // Clickable parent levels
             return `<span onclick="treemapVis.navigateToLevel(${i})">${name}</span>`;
         }).join(' / ');
+        
+        // Show metrics in file-info if available
+        if (currentNode && currentNode.data && currentNode.data.metrics) {
+            const metrics = [];
+            const m = currentNode.data.metrics;
+            if (m.value) metrics.push(`Commits: ${m.value}`);
+            if (m.line_count) metrics.push(`Lines: ${m.line_count}`);
+            if (m.unique_contributors) metrics.push(`Contributors: ${m.unique_contributors}`);
+            info.innerHTML = metrics.join(' • ');
+        } else {
+            info.innerHTML = '';
+        }
     }
 
     navigateToLevel(level) {
@@ -510,36 +529,9 @@ class TreemapVis {
     }
 
     showInfo(d) {
-        const info = document.getElementById('file-info');
-        const data = d.data;
-
-        // Compact display on 2-3 lines
-        let parts = [];
-        
-        // Line 1: Name and type
-        parts.push(`<strong>${data.name}</strong> (${data.is_directory ? 'Dir' : 'File'})`);
-        
-        // Line 2: Path
-        if (data.path) {
-            parts.push(`Path: ${data.path}`);
-        }
-        
-        // Line 3: Metrics (inline)
-        if (data.metrics || d.value) {
-            let metrics = [];
-            if (data.metrics) {
-                if (data.metrics.value) metrics.push(`Commits: ${data.metrics.value}`);
-                if (data.metrics.line_count) metrics.push(`Lines: ${data.metrics.line_count}`);
-                if (data.metrics.unique_contributors) metrics.push(`Contributors: ${data.metrics.unique_contributors}`);
-            } else if (d.value) {
-                metrics.push(`Total: ${d.value.toFixed(0)}`);
-            }
-            if (metrics.length > 0) {
-                parts.push(metrics.join(' • '));
-            }
-        }
-        
-        info.innerHTML = parts.join('<br>');
+        // Info is now handled in updateBreadcrumb
+        // Just update the breadcrumb when a node is clicked
+        this.updateBreadcrumb(d);
     }
     
     setupTreeExplorer() {
@@ -548,27 +540,46 @@ class TreemapVis {
             this.filterTreeView(e.target.value);
         });
         
-        // Toggle button
+        // Toggle buttons (one inside explorer, one outside when collapsed)
         const toggleBtn = document.getElementById('toggle-explorer');
+        const toggleBtnCollapsed = document.getElementById('toggle-explorer-collapsed');
         const explorer = document.getElementById('tree-explorer');
-        toggleBtn.addEventListener('click', () => {
-            explorer.classList.toggle('collapsed');
-            toggleBtn.textContent = explorer.classList.contains('collapsed') ? '▶' : '◀';
-        });
         
-        this.renderTreeView();
+        const toggleExplorer = () => {
+            const isCollapsed = explorer.classList.toggle('collapsed');
+            toggleBtn.textContent = isCollapsed ? '▶' : '◀';
+            toggleBtnCollapsed.style.display = isCollapsed ? 'block' : 'none';
+        };
+        
+        toggleBtn.addEventListener('click', toggleExplorer);
+        toggleBtnCollapsed.addEventListener('click', toggleExplorer);
+        
+        // Load tree data from API
+        this.loadTreeExplorerData();
+    }
+    
+    async loadTreeExplorerData() {
+        try {
+            const response = await fetch(`${API_BASE}/tree`);
+            const data = await response.json();
+            this.explorerTreeData = data.files;
+            console.log('Tree explorer loaded:', this.explorerTreeData.length, 'files');
+            this.renderTreeView();
+        } catch (error) {
+            console.error('Error loading tree explorer data:', error);
+        }
     }
     
     renderTreeView(filter = '') {
-        if (!this.fullTreeData) {
-            console.log('renderTreeView: No fullTreeData');
+        if (!this.explorerTreeData) {
+            console.log('renderTreeView: No explorerTreeData');
             return;
         }
         
-        console.log(`renderTreeView: ${this.fullTreeData.length} files, filter="${filter}"`);
+        console.log(`renderTreeView: ${this.explorerTreeData.length} files, filter="${filter}"`);
         
         const treeView = document.getElementById('tree-view');
-        const hierarchy = this.buildHierarchyForTree(this.fullTreeData);
+        const hierarchy = this.buildHierarchyForTree(this.explorerTreeData);
         
         console.log('Hierarchy:', hierarchy ? {name: hierarchy.name, childCount: hierarchy.children ? hierarchy.children.length : 0} : 'null');
         
