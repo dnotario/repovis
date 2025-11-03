@@ -58,7 +58,7 @@ body {
     background: #21262d;
 }
 
-#tree-search {
+#search-input {
     background: #0d1117;
     border: 1px solid #30363d;
     color: #c9d1d9;
@@ -68,7 +68,7 @@ body {
     font-size: 12px;
 }
 
-#tree-search:focus {
+#search-input:focus {
     outline: none;
     border-color: #58a6ff;
 }
@@ -127,6 +127,12 @@ body {
     flex: 1;
     overflow: hidden;
     text-overflow: ellipsis;
+    cursor: pointer;
+}
+
+.tree-name:hover {
+    color: #58a6ff;
+    text-decoration: underline;
 }
 
 .main-area {

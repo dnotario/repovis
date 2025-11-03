@@ -218,15 +218,27 @@ class TreemapVis {
             .attr('height', this.height);
 
         this.g = this.svg.append('g');
+        
+        // Add a highlight layer on top that also transforms with zoom
+        this.highlightLayer = this.svg.append('g');
 
-        // Add zoom and pan behavior
+        // Initialize scales for proper zoom behavior (prevents pixel rounding issues)
+        this.xScale = d3.scaleLinear().rangeRound([0, this.width]);
+        this.yScale = d3.scaleLinear().rangeRound([0, this.height]);
+
+        // Add zoom and pan behavior using scale-based zooming
         this.zoom = d3.zoom()
-            .scaleExtent([0.1, Infinity])  // Allow unlimited zoom
+            .scaleExtent([1, 1000])  // Allow significant zoom
             .on('zoom', (event) => {
-                this.g.attr('transform', event.transform);
+                // Update this for re-rendering on zoom
+                this.currentTransform = event.transform;
+                this.render();
             });
 
         this.svg.call(this.zoom);
+        
+        // Initialize transform
+        this.currentTransform = d3.zoomIdentity;
     }
 
     setupControls() {
@@ -328,12 +340,17 @@ class TreemapVis {
         // Use the root as display root (filtering already done in buildHierarchy)
         const displayRoot = root;
 
-        // Create treemap layout
+        // Create treemap layout (use unit square [0,1] for better zoom behavior)
         d3.treemap()
-            .size([this.width, this.height])
-            .padding(0)  // No padding between tiles
-            .round(true)
+            .size([1, 1])
+            .padding(0)
+            .round(false)  // Don't round in unit space
             (displayRoot);
+
+        // Update scales based on current zoom/pan transform
+        const t = this.currentTransform || d3.zoomIdentity;
+        this.xScale.domain([t.invertX(0) / this.width, t.invertX(this.width) / this.width]);
+        this.yScale.domain([t.invertY(0) / this.height, t.invertY(this.height) / this.height]);
 
         // Calculate max value for color scale (only non-directories with metrics)
         const maxValue = d3.max(
@@ -341,12 +358,6 @@ class TreemapVis {
             d => d.data.metrics.value
         ) || 1;
 
-        // Heatmap color scale (red = high, green = low)
-        const color = d3.scaleSequential()
-            .domain([0, maxValue])
-            .interpolator(d3.interpolateRdYlGn)
-            .unknown('#30363d');
-        
         // Reverse the interpolator so red = high commits
         const colorReversed = d3.scaleSequential()
             .domain([maxValue, 0])  // Reversed domain
@@ -358,17 +369,33 @@ class TreemapVis {
 
         console.log(`Rendering ${displayRoot.descendants().length} nodes, max value: ${maxValue}`);
 
-        // Create cells
+        // Filter to only visible nodes (within viewport)
+        const visibleNodes = displayRoot.descendants().filter(d => {
+            const x = this.xScale(d.x0);
+            const y = this.yScale(d.y0);
+            const w = this.xScale(d.x1) - this.xScale(d.x0);
+            const h = this.yScale(d.y1) - this.yScale(d.y0);
+            
+            // Only render if tile has visible size (> 1px) and is in viewport
+            return w >= 1 && h >= 1 && 
+                   x < this.width && x + w > 0 && 
+                   y < this.height && y + h > 0;
+        });
+
+        console.log(`Visible nodes: ${visibleNodes.length} of ${displayRoot.descendants().length}`);
+
+        // Create cells using scale-based positioning
         const cell = this.g.selectAll('g')
-            .data(displayRoot.descendants())
+            .data(visibleNodes)
             .join('g')
-            .attr('transform', d => `translate(${d.x0},${d.y0})`)
             .attr('class', 'node');
 
-        // Add rectangles
+        // Add rectangles with scale-based dimensions
         cell.append('rect')
-            .attr('width', d => d.x1 - d.x0)
-            .attr('height', d => d.y1 - d.y0)
+            .attr('x', d => this.xScale(d.x0))
+            .attr('y', d => this.yScale(d.y0))
+            .attr('width', d => Math.max(0, this.xScale(d.x1) - this.xScale(d.x0)))
+            .attr('height', d => Math.max(0, this.yScale(d.y1) - this.yScale(d.y0)))
             .attr('fill', d => {
                 if (!d.children) {
                     // Files: full heatmap color
@@ -384,7 +411,7 @@ class TreemapVis {
                 }
             })
             .attr('stroke', '#0d1117')
-            .attr('stroke-width', 2)
+            .attr('stroke-width', 0.5)
             .on('click', (event, d) => {
                 event.stopPropagation();
                 this.clicked(d);
@@ -421,12 +448,10 @@ class TreemapVis {
     
     resetZoomAndRender() {
         // Reset zoom/pan to identity transform
+        this.currentTransform = d3.zoomIdentity;
         this.svg.transition()
             .duration(300)
             .call(this.zoom.transform, d3.zoomIdentity);
-        
-        // Then render
-        setTimeout(() => this.render(), 350);
     }
 
     updateBreadcrumb(node) {
@@ -540,7 +565,7 @@ class TreemapVis {
     }
     
     setupTreeExplorer() {
-        const search = document.getElementById('tree-search');
+        const search = document.getElementById('search-input');
         search.addEventListener('input', (e) => {
             this.filterTreeView(e.target.value);
         });
@@ -670,17 +695,31 @@ class TreemapVis {
             });
             
             if (hasChildren) {
-                // Click on chevron or directory name toggles expand/collapse
-                node.addEventListener('click', (e) => {
-                    if (this.expandedNodes.has(path)) {
-                        this.expandedNodes.delete(path);
-                    } else {
-                        this.expandedNodes.add(path);
-                    }
-                    
-                    // Re-render tree with updated expansion state
-                    this.renderTreeView(this.currentFilter || '');
-                });
+                // Click on chevron toggles expand/collapse, click on name navigates
+                const chevron = node.querySelector('.tree-chevron');
+                const nameSpan = node.querySelector('.tree-name');
+                
+                if (chevron) {
+                    chevron.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        if (this.expandedNodes.has(path)) {
+                            this.expandedNodes.delete(path);
+                        } else {
+                            this.expandedNodes.add(path);
+                        }
+                        
+                        // Re-render tree with updated expansion state
+                        this.renderTreeView(this.currentFilter || '');
+                    });
+                }
+                
+                // Click on directory name navigates to it in the treemap
+                if (nameSpan) {
+                    nameSpan.addEventListener('click', (e) => {
+                        e.stopPropagation();
+                        this.navigateToPath(path);
+                    });
+                }
             } else {
                 // Click on file navigates to it
                 node.addEventListener('click', () => {
@@ -691,40 +730,50 @@ class TreemapVis {
     }
     
     highlightNodeInTreemap(path) {
-        if (!this.svg) return;
+        if (!this.highlightLayer) return;
+        
+        // Remove previous highlight
+        this.highlightLayer.selectAll('.hover-highlight').remove();
         
         // Normalize path (remove trailing slash for comparison)
         const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
         
-        // Find and highlight the matching node
-        this.svg.selectAll('rect')
-            .each(function(d) {
-                const rect = d3.select(this);
+        // Find the matching node and draw a white border around it
+        this.g.selectAll('rect')
+            .each((d) => {
                 if (d && d.data) {
                     const nodePath = d.data.path;
                     const normalizedNodePath = nodePath && nodePath.endsWith('/') ? nodePath.slice(0, -1) : nodePath;
                     
                     if (normalizedNodePath === normalizedPath) {
-                        // Highlight this rectangle
-                        rect.style('stroke', '#58a6ff')
-                            .style('stroke-width', '3px')
-                            .style('opacity', 1);
-                    } else {
-                        // Dim others
-                        rect.style('opacity', 0.3);
+                        // Get the rect dimensions using scales
+                        const x = this.xScale(d.x0);
+                        const y = this.yScale(d.y0);
+                        const width = this.xScale(d.x1) - this.xScale(d.x0);
+                        const height = this.yScale(d.y1) - this.yScale(d.y0);
+                        
+                        // Draw white border on the highlight layer (on top of everything)
+                        this.highlightLayer
+                            .append('rect')
+                            .attr('class', 'hover-highlight')
+                            .attr('x', x)
+                            .attr('y', y)
+                            .attr('width', width)
+                            .attr('height', height)
+                            .attr('fill', 'none')
+                            .attr('stroke', 'white')
+                            .attr('stroke-width', 4)
+                            .attr('pointer-events', 'none');
                     }
                 }
             });
     }
     
     clearTreemapHighlight() {
-        if (!this.svg) return;
+        if (!this.highlightLayer) return;
         
-        // Remove all highlighting
-        this.svg.selectAll('rect')
-            .style('stroke', null)
-            .style('stroke-width', null)
-            .style('opacity', 1);
+        // Remove the highlight rectangle
+        this.highlightLayer.selectAll('.hover-highlight').remove();
     }
     
     updateBreadcrumbOnHover(path) {
