@@ -39,8 +39,39 @@ class TreemapVis {
         // Setup tree explorer (loads its own data)
         this.setupTreeExplorer();
         
+        // Compute initial percentiles
+        this.computePercentiles();
+        
         // Initial render - builds structure once
         this.render();
+    }
+    
+    computePercentiles() {
+        // Compute percentiles once and cache them
+        if (!this.root) return;
+        
+        // Get all files with metrics (excluding 0s)
+        const filesWithMetrics = this.root.descendants().filter(d => !d.children && d.data.metrics && d.data.metrics.value > 0);
+        
+        // Get all commit values and sort them
+        const commitValues = filesWithMetrics.map(d => d.data.metrics.value).sort((a, b) => a - b);
+        
+        console.log(`Computing percentiles for ${commitValues.length} files with commits`);
+        
+        // Create a map from commit value to percentile
+        this.percentileMap = new Map();
+        
+        for (let i = 0; i < commitValues.length; i++) {
+            const value = commitValues[i];
+            const percentile = (i + 1) / commitValues.length;
+            
+            // Store the highest percentile for this value (in case of duplicates)
+            if (!this.percentileMap.has(value) || this.percentileMap.get(value) < percentile) {
+                this.percentileMap.set(value, percentile);
+            }
+        }
+        
+        console.log(`Percentile map created with ${this.percentileMap.size} unique values`);
     }
 
     async getDateRangeFromTimeline() {
@@ -96,6 +127,9 @@ class TreemapVis {
             });
             
             console.log('Metrics loaded for', Object.keys(this.metricsData).length, 'files');
+            
+            // Compute percentiles once when metrics change
+            this.computePercentiles();
             
             // Update colors only, not structure
             this.updateColors();
@@ -335,19 +369,19 @@ class TreemapVis {
         this.xScale.domain([t.invertX(0) / this.width, t.invertX(this.width) / this.width]);
         this.yScale.domain([t.invertY(0) / this.height, t.invertY(this.height) / this.height]);
 
-        // Calculate max value for color scale (only non-directories with metrics)
-        const maxValue = d3.max(
-            displayRoot.descendants().filter(d => !d.children && d.data.metrics), 
-            d => d.data.metrics.value
-        ) || 1;
-
-        // Color scale: yellow for 0 commits, green to red for commits
+        // Color scale: yellow for 0 commits, percentile-based for commits
         const getColor = (value) => {
             if (value === 0) return '#ffd700'; // Yellow for zero commits
+            
+            // Look up pre-computed percentile
+            const percentile = this.percentileMap && this.percentileMap.has(value) ? this.percentileMap.get(value) : 0;
+            
+            // Map percentile (0-1) to color scale
             const scale = d3.scaleSequential()
-                .domain([maxValue, 0])  // Reversed domain: red = high, green = low
+                .domain([1, 0])  // Reversed: 1 = red (high percentile), 0 = green (low percentile)
                 .interpolator(d3.interpolateRdYlGn);
-            return scale(value);
+            
+            return scale(percentile);
         };
 
         // Clear previous
@@ -356,7 +390,7 @@ class TreemapVis {
         // Clear highlight layer on render (it will be redrawn on hover)
         this.highlightLayer.selectAll('*').remove();
 
-        console.log(`Rendering ${displayRoot.descendants().length} nodes, max value: ${maxValue}`);
+        console.log(`Rendering ${displayRoot.descendants().length} nodes`);
 
         // Filter to only visible nodes (within viewport)
         const visibleNodes = displayRoot.descendants().filter(d => {
@@ -522,21 +556,21 @@ class TreemapVis {
             }
         });
         
-        // Recalculate max value with new metrics
-        const maxValue = d3.max(
-            this.root.descendants().filter(d => !d.children && d.data.metrics), 
-            d => d.data.metrics.value
-        ) || 1;
+        console.log(`Updating colors with percentile map`);
         
-        console.log(`Updating colors, max value: ${maxValue}`);
-        
-        // Color scale: yellow for 0 commits, green to red for commits
+        // Color scale: yellow for 0 commits, percentile-based for commits
         const getColor = (value) => {
             if (value === 0) return '#ffd700'; // Yellow for zero commits
+            
+            // Look up pre-computed percentile
+            const percentile = this.percentileMap && this.percentileMap.has(value) ? this.percentileMap.get(value) : 0;
+            
+            // Map percentile (0-1) to color scale
             const scale = d3.scaleSequential()
-                .domain([maxValue, 0])  // Reversed domain: red = high, green = low
+                .domain([1, 0])  // Reversed: 1 = red (high percentile), 0 = green (low percentile)
                 .interpolator(d3.interpolateRdYlGn);
-            return scale(value);
+            
+            return scale(percentile);
         };
         
         // Update rectangle fills
