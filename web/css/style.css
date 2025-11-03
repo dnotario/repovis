@@ -86,6 +86,9 @@ body {
     cursor: pointer;
     white-space: nowrap;
     user-select: none;
+    display: flex;
+    align-items: center;
+    gap: 4px;
 }
 
 .tree-node:hover {
@@ -106,10 +109,24 @@ body {
     color: #fff;
 }
 
-.tree-icon {
+.tree-chevron {
     display: inline-block;
-    width: 16px;
-    margin-right: 4px;
+    width: 12px;
+    font-size: 10px;
+    color: #8b949e;
+    flex-shrink: 0;
+}
+
+.tree-spacer {
+    display: inline-block;
+    width: 12px;
+    flex-shrink: 0;
+}
+
+.tree-name {
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 
 .main-area {

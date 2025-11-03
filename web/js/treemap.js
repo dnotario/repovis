@@ -583,39 +583,66 @@ class TreemapVis {
         
         console.log('Hierarchy:', hierarchy ? {name: hierarchy.name, childCount: hierarchy.children ? hierarchy.children.length : 0} : 'null');
         
+        // Track expanded state
+        if (!this.expandedNodes) {
+            this.expandedNodes = new Set();
+        }
+        
         let html = '';
         let nodeCount = 0;
+        
         const renderNode = (node, depth = 0) => {
             if (!node) return;
             
             const isDir = node.is_directory;
-            const icon = isDir ? '📁' : '📄';
-            const className = isDir ? 'directory' : 'file';
+            const hasChildren = node.children && node.children.length > 0;
+            const nodePath = node.path || node.name;
+            const isExpanded = this.expandedNodes.has(nodePath);
             
             const matchesFilter = !filter || node.name.toLowerCase().includes(filter.toLowerCase());
             
-            if (matchesFilter) {
-                const path = node.path || node.name;
-                html += `<div class="tree-node ${className}" data-path="${path}" style="padding-left: ${depth * 16 + 8}px">
-                    <span class="tree-icon">${icon}</span>${node.name}
+            if (matchesFilter || (hasChildren && !filter)) {
+                // Render this node
+                let icon = '';
+                if (hasChildren) {
+                    // Directory with chevron
+                    icon = `<span class="tree-chevron">${isExpanded ? '▼' : '▶'}</span>📁`;
+                } else {
+                    // File
+                    icon = '<span class="tree-spacer"></span>📄';
+                }
+                
+                const className = isDir ? 'directory' : 'file';
+                html += `<div class="tree-node ${className}" data-path="${nodePath}" data-has-children="${hasChildren}" style="padding-left: ${depth * 16 + 8}px">
+                    ${icon}<span class="tree-name">${node.name}</span>
                 </div>`;
                 nodeCount++;
-            }
-            
-            if (node.children && node.children.length > 0) {
-                node.children
-                    .sort((a, b) => {
-                        // Directories first, then alphabetical
-                        if (a.is_directory && !b.is_directory) return -1;
-                        if (!a.is_directory && b.is_directory) return 1;
-                        return a.name.localeCompare(b.name);
-                    })
-                    .forEach(child => renderNode(child, depth + 1));
+                
+                // Render children only if expanded (or filtering)
+                if (hasChildren && (isExpanded || filter)) {
+                    node.children
+                        .sort((a, b) => {
+                            // Directories first, then alphabetical
+                            if (a.is_directory && !b.is_directory) return -1;
+                            if (!a.is_directory && b.is_directory) return 1;
+                            return a.name.localeCompare(b.name);
+                        })
+                        .forEach(child => renderNode(child, depth + 1));
+                }
             }
         };
         
         if (hierarchy) {
-            renderNode(hierarchy);
+            // Render children of synthetic root
+            if (hierarchy.children) {
+                hierarchy.children
+                    .sort((a, b) => {
+                        if (a.is_directory && !b.is_directory) return -1;
+                        if (!a.is_directory && b.is_directory) return 1;
+                        return a.name.localeCompare(b.name);
+                    })
+                    .forEach(child => renderNode(child, 0));
+            }
         }
         
         console.log(`Rendered ${nodeCount} tree nodes`);
@@ -623,10 +650,29 @@ class TreemapVis {
         
         // Add click handlers
         treeView.querySelectorAll('.tree-node').forEach(node => {
-            node.addEventListener('click', () => {
-                const path = node.getAttribute('data-path');
-                this.navigateToPath(path);
-            });
+            const hasChildren = node.getAttribute('data-has-children') === 'true';
+            
+            if (hasChildren) {
+                // Click on chevron or directory name toggles expand/collapse
+                node.addEventListener('click', (e) => {
+                    const path = node.getAttribute('data-path');
+                    
+                    if (this.expandedNodes.has(path)) {
+                        this.expandedNodes.delete(path);
+                    } else {
+                        this.expandedNodes.add(path);
+                    }
+                    
+                    // Re-render tree with updated expansion state
+                    this.renderTreeView(this.currentFilter || '');
+                });
+            } else {
+                // Click on file navigates to it
+                node.addEventListener('click', () => {
+                    const path = node.getAttribute('data-path');
+                    this.navigateToPath(path);
+                });
+            }
         });
     }
     
@@ -664,6 +710,7 @@ class TreemapVis {
     }
     
     filterTreeView(filterText) {
+        this.currentFilter = filterText;
         this.renderTreeView(filterText);
     }
     
