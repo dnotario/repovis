@@ -448,20 +448,25 @@ class TreemapVis {
         const isDirectory = currentNode && currentNode.children ? true : false;
         const typeLabel = isDirectory ? 'Dir' : 'File';
         
+        // Get commit count if available
+        let commitCount = '';
+        if (currentNode && currentNode.data && currentNode.data.metrics && currentNode.data.metrics.value) {
+            commitCount = ` - ${currentNode.data.metrics.value} commits`;
+        }
+        
         breadcrumb.innerHTML = parts.map((name, i) => {
             if (i === parts.length - 1) {
-                // Current level - not clickable, with type indicator
-                return `<span style="color: #c9d1d9">${name} (${typeLabel})</span>`;
+                // Current level - not clickable, with type indicator and commit count
+                return `<span style="color: #c9d1d9">${name} (${typeLabel})${commitCount}</span>`;
             }
             // Clickable parent levels
             return `<span onclick="treemapVis.navigateToLevel(${i})">${name}</span>`;
         }).join(' / ');
         
-        // Show metrics in file-info if available
+        // Show additional metrics in file-info if available
         if (currentNode && currentNode.data && currentNode.data.metrics) {
             const metrics = [];
             const m = currentNode.data.metrics;
-            if (m.value) metrics.push(`Commits: ${m.value}`);
             if (m.line_count) metrics.push(`Lines: ${m.line_count}`);
             if (m.unique_contributors) metrics.push(`Contributors: ${m.unique_contributors}`);
             info.innerHTML = metrics.join(' • ');
@@ -653,13 +658,15 @@ class TreemapVis {
             const hasChildren = node.getAttribute('data-has-children') === 'true';
             const path = node.getAttribute('data-path');
             
-            // Hover handlers - highlight in treemap
+            // Hover handlers - highlight in treemap and update breadcrumb
             node.addEventListener('mouseenter', () => {
                 this.highlightNodeInTreemap(path);
+                this.updateBreadcrumbOnHover(path);
             });
             
             node.addEventListener('mouseleave', () => {
                 this.clearTreemapHighlight();
+                this.restoreBreadcrumb();
             });
             
             if (hasChildren) {
@@ -718,6 +725,56 @@ class TreemapVis {
             .style('stroke', null)
             .style('stroke-width', null)
             .style('opacity', 1);
+    }
+    
+    updateBreadcrumbOnHover(path) {
+        // Store the current breadcrumb if not already stored
+        if (!this.originalBreadcrumb) {
+            this.originalBreadcrumb = document.getElementById('breadcrumb').innerHTML;
+        }
+        
+        // Find the node data from explorerTreeData
+        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        
+        if (!this.explorerTreeData) return;
+        
+        const node = this.explorerTreeData.find(f => {
+            const fp = f.path.endsWith('/') ? f.path.slice(0, -1) : f.path;
+            return fp === normalizedPath;
+        });
+        
+        if (!node) return;
+        
+        // Get commit count from metricsData (which is a path->metrics map)
+        let commitCount = 0;
+        if (this.metricsData) {
+            // Try both with and without trailing slash
+            const metrics = this.metricsData[normalizedPath] || this.metricsData[path];
+            if (metrics && metrics.value) {
+                commitCount = metrics.value;
+            }
+        }
+        
+        // Update breadcrumb with hovered path
+        const breadcrumb = document.getElementById('breadcrumb');
+        const pathParts = normalizedPath.split('/').filter(p => p);
+        const parts = ['root', ...pathParts];
+        const typeLabel = node.is_directory ? 'Dir' : 'File';
+        const commitText = commitCount > 0 ? ` - ${commitCount} commits` : '';
+        
+        breadcrumb.innerHTML = parts.map((name, i) => {
+            if (i === parts.length - 1) {
+                return `<span style="color: #58a6ff">${name} (${typeLabel})${commitText}</span>`;
+            }
+            return `<span style="color: #8b949e">${name}</span>`;
+        }).join(' / ');
+    }
+    
+    restoreBreadcrumb() {
+        if (this.originalBreadcrumb) {
+            document.getElementById('breadcrumb').innerHTML = this.originalBreadcrumb;
+            this.originalBreadcrumb = null;
+        }
     }
     
     buildHierarchyForTree(files) {
