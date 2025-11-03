@@ -228,7 +228,7 @@ class TreemapVis {
 
         // Add zoom and pan behavior using scale-based zooming
         this.zoom = d3.zoom()
-            .scaleExtent([1, 1000])  // Allow significant zoom
+            .scaleExtent([0.1, 1000])  // Allow zoom out to 10% and in to 1000x
             .on('zoom', (event) => {
                 // Update this for re-rendering on zoom
                 this.currentTransform = event.transform;
@@ -417,7 +417,12 @@ class TreemapVis {
                 this.clicked(d);
             })
             .on('mouseover', (event, d) => {
-                this.showInfo(d);
+                this.highlightTreemapNode(d);
+                this.updateBreadcrumbFromTreemap(d);
+            })
+            .on('mouseout', (event, d) => {
+                this.clearTreemapHighlight();
+                this.restoreBreadcrumb();
             });
 
         // Update breadcrumb
@@ -457,10 +462,12 @@ class TreemapVis {
     updateBreadcrumb(node) {
         const breadcrumb = document.getElementById('breadcrumb');
         const info = document.getElementById('file-info');
+        const hoverPath = document.getElementById('hover-path');
         
         if (!this.currentDirectory) {
             breadcrumb.innerHTML = '<span style="color: #c9d1d9">root (Dir)</span>';
             info.innerHTML = '';
+            hoverPath.innerHTML = '';
             return;
         }
         
@@ -776,6 +783,68 @@ class TreemapVis {
         this.highlightLayer.selectAll('.hover-highlight').remove();
     }
     
+    highlightTreemapNode(d) {
+        if (!this.highlightLayer) return;
+        
+        // Remove previous highlight
+        this.highlightLayer.selectAll('.hover-highlight').remove();
+        
+        // Get the rect dimensions using scales
+        const x = this.xScale(d.x0);
+        const y = this.yScale(d.y0);
+        const width = this.xScale(d.x1) - this.xScale(d.x0);
+        const height = this.yScale(d.y1) - this.yScale(d.y0);
+        
+        // Draw white border on the highlight layer (on top of everything)
+        this.highlightLayer
+            .append('rect')
+            .attr('class', 'hover-highlight')
+            .attr('x', x)
+            .attr('y', y)
+            .attr('width', width)
+            .attr('height', height)
+            .attr('fill', 'none')
+            .attr('stroke', 'white')
+            .attr('stroke-width', 4)
+            .attr('pointer-events', 'none');
+    }
+    
+    updateBreadcrumbFromTreemap(d) {
+        // Store the current breadcrumb if not already stored
+        if (!this.originalBreadcrumb) {
+            this.originalBreadcrumb = document.getElementById('breadcrumb').innerHTML;
+        }
+        
+        const path = d.data.path || d.data.name;
+        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        
+        // Get commit count from the node's data
+        let commitCount = 0;
+        if (d.data.metrics && d.data.metrics.value) {
+            commitCount = d.data.metrics.value;
+        } else if (d.value) {
+            commitCount = d.value;
+        }
+        
+        // Update breadcrumb with hovered path
+        const breadcrumb = document.getElementById('breadcrumb');
+        const hoverPath = document.getElementById('hover-path');
+        const pathParts = normalizedPath.split('/').filter(p => p);
+        const parts = ['root', ...pathParts];
+        const typeLabel = d.children ? 'Dir' : 'File';
+        const commitText = commitCount > 0 ? ` - ${commitCount} commits` : '';
+        
+        breadcrumb.innerHTML = parts.map((name, i) => {
+            if (i === parts.length - 1) {
+                return `<span style="color: #58a6ff">${name} (${typeLabel})${commitText}</span>`;
+            }
+            return `<span style="color: #8b949e">${name}</span>`;
+        }).join(' / ');
+        
+        // Show full path in hover-path line
+        hoverPath.innerHTML = `<span style="color: #8b949e; font-size: 0.9em;">${normalizedPath}</span>`;
+    }
+    
     updateBreadcrumbOnHover(path) {
         // Store the current breadcrumb if not already stored
         if (!this.originalBreadcrumb) {
@@ -806,6 +875,7 @@ class TreemapVis {
         
         // Update breadcrumb with hovered path
         const breadcrumb = document.getElementById('breadcrumb');
+        const hoverPath = document.getElementById('hover-path');
         const pathParts = normalizedPath.split('/').filter(p => p);
         const parts = ['root', ...pathParts];
         const typeLabel = node.is_directory ? 'Dir' : 'File';
@@ -817,11 +887,15 @@ class TreemapVis {
             }
             return `<span style="color: #8b949e">${name}</span>`;
         }).join(' / ');
+        
+        // Show full path in hover-path line
+        hoverPath.innerHTML = `<span style="color: #8b949e; font-size: 0.9em;">${normalizedPath}</span>`;
     }
     
     restoreBreadcrumb() {
         if (this.originalBreadcrumb) {
             document.getElementById('breadcrumb').innerHTML = this.originalBreadcrumb;
+            document.getElementById('hover-path').innerHTML = '';
             this.originalBreadcrumb = null;
         }
     }
