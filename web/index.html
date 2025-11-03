@@ -22,23 +22,36 @@
         
         <div class="main-area">
             <header>
-                <div id="breadcrumb"></div>
+                <div class="header-content">
+                    <div class="breadcrumb-section">
+                        <div id="breadcrumb"></div>
+                    </div>
+                    <div class="time-range-section">
+                        <div id="time-range"></div>
+                    </div>
+                </div>
                 <div id="file-info"></div>
             </header>
-            
-            <div class="controls">
-                <button id="reset-btn">Reset View</button>
-                <select id="metric-select">
-                    <option value="commit_count">Commit Count</option>
-                    <option value="line_count">Line Count</option>
-                    <option value="unique_contributors">Contributors</option>
-                </select>
-            </div>
             
             <div id="treemap"></div>
             
             <div id="timeline-container">
                 <div id="timeline"></div>
+            </div>
+        </div>
+        
+        <button id="toggle-contributors-collapsed" style="display: none;">◀</button>
+        
+        <div id="contributors-panel">
+            <div class="explorer-header">
+                <h3>Contributors</h3>
+                <button id="toggle-contributors">▶</button>
+            </div>
+            <input type="text" id="contributors-search" placeholder="Search contributors...">
+            <div id="contributors-list"></div>
+            <div class="contributors-actions">
+                <button id="select-all-contributors">Select All</button>
+                <button id="clear-all-contributors">Clear All</button>
             </div>
         </div>
     </div>

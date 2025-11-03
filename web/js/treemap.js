@@ -11,6 +11,10 @@ class TreemapVis {
         this.height = 0;
         this.dateRange = null;
         this.selectedDateRange = null;
+        this.contributors = null;
+        this.selectedContributors = new Set(); // Store selected contributor IDs
+        this.pendingMetricsRequest = null; // Track ongoing request
+        this.nextMetricsRequest = null; // Track next request to make
         
         this.init();
     }
@@ -21,6 +25,9 @@ class TreemapVis {
         
         // Load file structure (this never changes) - but don't use it for tree explorer
         await this.loadFileStructure();
+        
+        // Load contributors
+        await this.loadContributors();
         
         // Load metrics for initial time range
         if (this.dateRange) {
@@ -33,11 +40,11 @@ class TreemapVis {
         // Setup visualization
         this.setupTreemap();
         
-        // Setup controls
-        this.setupControls();
-        
         // Setup tree explorer (loads its own data)
         this.setupTreeExplorer();
+        
+        // Setup contributors panel
+        this.setupContributorsPanel();
         
         // Compute initial percentiles
         this.computePercentiles();
@@ -48,7 +55,16 @@ class TreemapVis {
     
     computePercentiles() {
         // Compute percentiles once and cache them
-        if (!this.root) return;
+        if (!this.root || !this.metricsData) return;
+        
+        // IMPORTANT: Update metrics in the hierarchy BEFORE computing percentiles
+        this.root.each(node => {
+            if (node.data) {
+                const key = node.data.path || node.data.name;
+                const currentMetrics = this.metricsData[key];
+                node.data.metrics = currentMetrics;
+            }
+        });
         
         // Get all files with metrics (excluding 0s)
         const filesWithMetrics = this.root.descendants().filter(d => !d.children && d.data.metrics && d.data.metrics.value > 0);
@@ -112,12 +128,70 @@ class TreemapVis {
         }
     }
 
-    async loadMetrics(startDate, endDate) {
+    async loadMetrics(startDate, endDate, contributorIds = null) {
+        // Queue the request
+        const requestParams = { startDate, endDate, contributorIds };
+        
+        // If there's already a pending request, store this as the next one
+        if (this.pendingMetricsRequest) {
+            this.nextMetricsRequest = requestParams;
+            console.log('Request queued (pending request in progress)');
+            return;
+        }
+        
+        // Mark request as pending
+        this.pendingMetricsRequest = requestParams;
+        
         try {
             // Load only metrics for the time range
-            const url = `${API_BASE}/tree?start_date=${startDate}&end_date=${endDate}`;
+            let url = `${API_BASE}/tree?start_date=${startDate}&end_date=${endDate}`;
+            
+            console.log('loadMetrics called with:', {
+                contributorIds,
+                contributorsLength: this.contributors?.length,
+                selectedCount: contributorIds?.length
+            });
+            
+            // Add contributor filter if specified
+            // Smart logic: use IN for small selections, NOT IN for "all minus a few"
+            if (contributorIds !== null && this.contributors) {
+                const totalContributors = this.contributors.length;
+                const selectedCount = contributorIds.length;
+                
+                console.log(`Contributors: ${selectedCount} selected out of ${totalContributors} total`);
+                
+                if (selectedCount === 0) {
+                    // No contributors selected - return empty results
+                    // We still need to make the call but it will return no metrics
+                    console.log('No contributors selected - using contributors=-1');
+                    url += `&contributors=-1`; // Invalid ID ensures no results
+                } else if (selectedCount <= totalContributors / 2) {
+                    // Less than half selected - use IN
+                    console.log(`Using IN with ${selectedCount} contributors`);
+                    url += `&contributors=${contributorIds.join(',')}`;
+                } else if (selectedCount < totalContributors) {
+                    // More than half selected - use NOT IN
+                    const unselectedIds = this.contributors
+                        .map(c => c.id)
+                        .filter(id => !contributorIds.includes(id));
+                    console.log(`Using NOT IN with ${unselectedIds.length} excluded contributors`);
+                    url += `&exclude_contributors=${unselectedIds.join(',')}`;
+                } else {
+                    console.log('All contributors selected - no filter');
+                }
+                // If all are selected, don't add any filter (most efficient)
+            } else {
+                console.log('contributorIds is null or contributors not loaded - no filter');
+            }
+            
+            console.log('Fetching:', url);
+            
             const response = await fetch(url);
             const data = await response.json();
+            
+            // Debug: Check how many files have metrics
+            const filesWithMetrics = data.files.filter(f => f.metrics && f.metrics.value > 0);
+            console.log(`API returned ${data.files.length} files, ${filesWithMetrics.length} have non-zero metrics`);
             
             // Create a map of metrics by file path
             this.metricsData = {};
@@ -135,6 +209,17 @@ class TreemapVis {
             this.updateColors();
         } catch (error) {
             console.error('Error loading metrics:', error);
+        } finally {
+            // Mark request as complete
+            this.pendingMetricsRequest = null;
+            
+            // If there's a queued request, process it now
+            if (this.nextMetricsRequest) {
+                const next = this.nextMetricsRequest;
+                this.nextMetricsRequest = null;
+                console.log('Processing queued request');
+                this.loadMetrics(next.startDate, next.endDate, next.contributorIds);
+            }
         }
     }
 
@@ -166,6 +251,9 @@ class TreemapVis {
                 start: this.dateRange.min_date,
                 end: this.dateRange.max_date
             };
+            
+            // Update time range display
+            this.updateTimeRangeDisplay();
             
             // Create timeline visualization
             const margin = {top: 10, right: 20, bottom: 30, left: 20};
@@ -225,10 +313,12 @@ class TreemapVis {
                         end: endDate.toISOString().split('T')[0]
                     };
                     
-                    // Only reload on brush end to avoid too many updates
-                    if (event.type === 'end') {
-                        this.loadMetrics(this.selectedDateRange.start, this.selectedDateRange.end);
-                    }
+                    // Update time range display
+                    this.updateTimeRangeDisplay();
+                    
+                    // Request update immediately - queuing handles max 1 outstanding request
+                    const contributorIds = Array.from(this.selectedContributors);
+                    this.loadMetrics(this.selectedDateRange.start, this.selectedDateRange.end, contributorIds);
                 });
             
             const brushGroup = svg.append('g')
@@ -273,25 +363,6 @@ class TreemapVis {
         
         // Initialize transform
         this.currentTransform = d3.zoomIdentity;
-    }
-
-    setupControls() {
-        document.getElementById('reset-btn').addEventListener('click', () => {
-            // Reset zoom/pan to identity transform
-            this.svg.transition()
-                .duration(750)
-                .call(this.zoom.transform, d3.zoomIdentity);
-            
-            // Reset to root
-            this.currentDirectory = null;
-            this.currentRoot = null;
-            this.render();
-        });
-
-        document.getElementById('metric-select').addEventListener('change', (e) => {
-            this.currentMetric = e.target.value;
-            this.render();
-        });
     }
 
     buildHierarchy(files) {
@@ -1096,6 +1167,136 @@ class TreemapVis {
                 console.log('Could not find tree element for path:', targetPath);
             }
         }, 100);
+    }
+    
+    async loadContributors() {
+        try {
+            const response = await fetch(`${API_BASE}/contributors`);
+            const data = await response.json();
+            this.contributors = data.contributors;
+            
+            // Initially select all contributors
+            this.contributors.forEach(c => this.selectedContributors.add(c.id));
+            
+            console.log(`Loaded ${this.contributors.length} contributors, all selected`);
+        } catch (error) {
+            console.error('Error loading contributors:', error);
+        }
+    }
+    
+    setupContributorsPanel() {
+        const search = document.getElementById('contributors-search');
+        search.addEventListener('input', (e) => {
+            this.filterContributors(e.target.value);
+        });
+        
+        // Toggle buttons
+        const toggleBtn = document.getElementById('toggle-contributors');
+        const toggleBtnCollapsed = document.getElementById('toggle-contributors-collapsed');
+        const panel = document.getElementById('contributors-panel');
+        
+        const togglePanel = () => {
+            const isCollapsed = panel.classList.toggle('collapsed');
+            toggleBtn.textContent = isCollapsed ? '◀' : '▶';
+            toggleBtnCollapsed.style.display = isCollapsed ? 'block' : 'none';
+        };
+        
+        toggleBtn.addEventListener('click', togglePanel);
+        toggleBtnCollapsed.addEventListener('click', togglePanel);
+        
+        // Select All / Clear All buttons
+        document.getElementById('select-all-contributors').addEventListener('click', () => {
+            this.selectAllContributors();
+        });
+        
+        document.getElementById('clear-all-contributors').addEventListener('click', () => {
+            this.clearAllContributors();
+        });
+        
+        // Render the list
+        this.renderContributorsList();
+    }
+    
+    renderContributorsList(filter = '') {
+        if (!this.contributors) return;
+        
+        const list = document.getElementById('contributors-list');
+        const filterLower = filter.toLowerCase();
+        
+        let html = '';
+        this.contributors
+            .filter(c => !filter || c.name.toLowerCase().includes(filterLower) || c.email.toLowerCase().includes(filterLower))
+            .forEach(contributor => {
+                const isChecked = this.selectedContributors.has(contributor.id);
+                html += `
+                    <div class="contributor-item" data-id="${contributor.id}">
+                        <input type="checkbox" ${isChecked ? 'checked' : ''} data-id="${contributor.id}">
+                        <span class="contributor-name" title="${contributor.email}">${contributor.name}</span>
+                    </div>
+                `;
+            });
+        
+        list.innerHTML = html;
+        
+        // Add event listeners to checkboxes
+        list.querySelectorAll('input[type="checkbox"]').forEach(checkbox => {
+            checkbox.addEventListener('change', (e) => {
+                e.stopPropagation();
+                const contributorId = parseInt(e.target.getAttribute('data-id'));
+                if (e.target.checked) {
+                    this.selectedContributors.add(contributorId);
+                } else {
+                    this.selectedContributors.delete(contributorId);
+                }
+                
+                // Update immediately without debounce
+                this.updateMetricsFromContributors();
+            });
+        });
+        
+        // Also allow clicking on the item to toggle
+        list.querySelectorAll('.contributor-item').forEach(item => {
+            item.addEventListener('click', (e) => {
+                if (e.target.tagName !== 'INPUT') {
+                    const checkbox = item.querySelector('input[type="checkbox"]');
+                    checkbox.checked = !checkbox.checked;
+                    checkbox.dispatchEvent(new Event('change', { bubbles: true }));
+                }
+            });
+        });
+    }
+    
+    filterContributors(filterText) {
+        this.currentContributorFilter = filterText;
+        this.renderContributorsList(filterText);
+    }
+    
+    selectAllContributors() {
+        this.contributors.forEach(c => this.selectedContributors.add(c.id));
+        this.renderContributorsList(this.currentContributorFilter || '');
+        this.updateMetricsFromContributors();
+    }
+    
+    clearAllContributors() {
+        this.selectedContributors.clear();
+        this.renderContributorsList(this.currentContributorFilter || '');
+        this.updateMetricsFromContributors();
+    }
+    
+    updateMetricsFromContributors() {
+        const contributorIds = Array.from(this.selectedContributors);
+        this.loadMetrics(
+            this.selectedDateRange.start, 
+            this.selectedDateRange.end,
+            contributorIds
+        );
+    }
+    
+    updateTimeRangeDisplay() {
+        const timeRangeEl = document.getElementById('time-range');
+        if (timeRangeEl && this.selectedDateRange) {
+            timeRangeEl.textContent = `Time range: ${this.selectedDateRange.start} to ${this.selectedDateRange.end}`;
+        }
     }
 }
 

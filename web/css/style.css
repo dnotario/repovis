@@ -36,24 +36,45 @@ body {
     align-items: center;
     padding: 15px;
     border-bottom: 1px solid #30363d;
+    position: relative;
 }
 
 .explorer-header h3 {
     font-size: 14px;
     margin: 0;
     color: #8b949e;
+    flex: 1;
 }
 
-#toggle-explorer {
+#contributors-panel .explorer-header h3 {
+    text-align: right;
+}
+
+#toggle-explorer, #toggle-contributors {
     background: transparent;
     border: none;
     color: #8b949e;
     cursor: pointer;
     font-size: 16px;
     padding: 4px 8px;
+    position: absolute;
+    right: -1px;
+    top: 50%;
+    transform: translateY(-50%);
+    background: #161b22;
+    border: 1px solid #30363d;
+    border-right: none;
+    z-index: 10;
 }
 
-#toggle-explorer:hover {
+#toggle-contributors {
+    left: -1px;
+    right: auto;
+    border-left: none;
+    border-right: 1px solid #30363d;
+}
+
+#toggle-explorer:hover, #toggle-contributors:hover {
     color: #c9d1d9;
     background: #21262d;
 }
@@ -66,6 +87,7 @@ body {
     margin: 10px 15px;
     border-radius: 4px;
     font-size: 12px;
+    width: calc(100% - 30px);
 }
 
 #search-input:focus {
@@ -146,6 +168,25 @@ header {
     background: #161b22;
     padding: 20px;
     border-bottom: 1px solid #30363d;
+    min-height: 100px;
+    display: flex;
+    flex-direction: column;
+}
+
+.header-content {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+}
+
+.breadcrumb-section {
+    flex: 1;
+}
+
+.time-range-section {
+    flex-shrink: 0;
+    min-width: 280px;
+    text-align: right;
 }
 
 .header-top {
@@ -166,6 +207,15 @@ h1 {
     color: #8b949e;
     font-family: monospace;
     margin-top: 10px;
+    padding-left: 40px;
+}
+
+#time-range {
+    font-size: 12px;
+    color: #8b949e;
+    font-family: monospace;
+    margin-top: 10px;
+    padding-right: 40px;
 }
 
 #file-info {
@@ -186,14 +236,6 @@ h1 {
 
 #breadcrumb span:hover {
     text-decoration: underline;
-}
-
-.controls {
-    background: #161b22;
-    padding: 15px 20px;
-    border-bottom: 1px solid #30363d;
-    display: flex;
-    gap: 10px;
 }
 
 button, select {
@@ -263,8 +305,7 @@ button:hover, select:hover {
 #toggle-explorer-collapsed {
     position: fixed;
     left: 0;
-    top: 50%;
-    transform: translateY(-50%);
+    top: 15px;
     background: #21262d;
     border: 1px solid #30363d;
     border-left: none;
@@ -281,18 +322,105 @@ button:hover, select:hover {
     background: #30363d;
 }
 
-#toggle-explorer {
-    background: transparent;
-    border: none;
+#toggle-contributors-collapsed {
+    position: fixed;
+    right: 0;
+    top: 15px;
+    background: #21262d;
+    border: 1px solid #30363d;
+    border-right: none;
+    border-radius: 4px 0 0 4px;
+    padding: 8px 6px;
     color: #8b949e;
     cursor: pointer;
+    z-index: 1000;
     font-size: 16px;
-    padding: 4px 8px;
-    transition: all 0.2s;
 }
 
-#toggle-explorer:hover {
+#toggle-contributors-collapsed:hover {
     color: #c9d1d9;
-    background: #21262d;
+    background: #30363d;
+}
+
+/* Contributors Panel */
+#contributors-panel {
+    width: 300px;
+    background: #161b22;
+    border-left: 1px solid #30363d;
+    display: flex;
+    flex-direction: column;
+    transition: margin-right 0.3s ease;
+}
+
+#contributors-panel.collapsed {
+    margin-right: -300px;
+}
+
+#contributors-search {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 8px 12px;
+    margin: 10px 15px;
     border-radius: 4px;
+    font-size: 12px;
+    width: calc(100% - 30px);
+}
+
+#contributors-search:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+.contributors-actions {
+    display: flex;
+    gap: 8px;
+    padding: 10px 15px;
+    border-top: 1px solid #30363d;
+}
+
+.contributors-actions button {
+    flex: 1;
+    padding: 6px 12px;
+    font-size: 12px;
+}
+
+#contributors-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.contributor-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+    gap: 8px;
+}
+
+.contributor-item:hover {
+    background: #21262d;
+}
+
+.contributor-item input[type="checkbox"] {
+    cursor: pointer;
+    flex-shrink: 0;
+}
+
+.contributor-name {
+    flex: 1;
+    color: #8b949e;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.contributor-count {
+    color: #8b949e;
+    font-size: 11px;
 }

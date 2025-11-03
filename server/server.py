@@ -77,7 +77,8 @@ async def get_metadata():
 async def get_tree(
     start_date: Optional[str] = Query(None, description="Start date (YYYY-MM-DD)"),
     end_date: Optional[str] = Query(None, description="End date (YYYY-MM-DD)"),
-    contributors: Optional[str] = Query(None, description="Comma-separated contributor IDs"),
+    contributors: Optional[str] = Query(None, description="Comma-separated contributor IDs to include"),
+    exclude_contributors: Optional[str] = Query(None, description="Comma-separated contributor IDs to exclude"),
     metric: str = Query("commit_count", description="Metric type: commit_count, lines_added, lines_deleted")
 ):
     """
@@ -122,13 +123,19 @@ async def get_tree(
         
         params = [start_date, end_date]
         
-        # Filter by contributors if provided
+        # Filter by contributors - use IN or NOT IN based on what's provided
         if contributors:
             contributor_ids = [int(c.strip()) for c in contributors.split(',') if c.strip()]
             if contributor_ids:
                 placeholders = ','.join('?' * len(contributor_ids))
                 query += f" AND contributor_id IN ({placeholders})"
                 params.extend(contributor_ids)
+        elif exclude_contributors:
+            excluded_ids = [int(c.strip()) for c in exclude_contributors.split(',') if c.strip()]
+            if excluded_ids:
+                placeholders = ','.join('?' * len(excluded_ids))
+                query += f" AND contributor_id NOT IN ({placeholders})"
+                params.extend(excluded_ids)
         
         query += " GROUP BY file_id"
         
