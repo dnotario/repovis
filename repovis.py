@@ -118,18 +118,15 @@ class RepoVis:
         return file_id
     
     def update_metrics(self, file_id: int, contributor_id: int, date: str, 
-                       commit_count: int = 1, lines_added: int = 0, lines_deleted: int = 0):
+                       commit_count: int = 1):
         """Update or insert file metrics"""
         self.cursor.execute("""
             INSERT INTO file_metrics (file_id, contributor_id, date, commit_count, lines_added, lines_deleted)
-            VALUES (?, ?, ?, ?, ?, ?)
+            VALUES (?, ?, ?, ?, 0, 0)
             ON CONFLICT(file_id, contributor_id, date) 
             DO UPDATE SET 
-                commit_count = commit_count + ?,
-                lines_added = lines_added + ?,
-                lines_deleted = lines_deleted + ?
-        """, (file_id, contributor_id, date, commit_count, lines_added, lines_deleted,
-              commit_count, lines_added, lines_deleted))
+                commit_count = commit_count + ?
+        """, (file_id, contributor_id, date, commit_count, commit_count))
     
     def process_commits(self):
         """Process commits in the repository (optionally filtered by date range)"""
@@ -175,39 +172,10 @@ class RepoVis:
                     commit.message[:500]
                 ))
                 
-                if commit.parents:
-                    parent = commit.parents[0]
-                    diffs = parent.diff(commit)
-                    
-                    for diff in diffs:
-                        file_path = diff.b_path if diff.b_path else diff.a_path
-                        if not file_path:
-                            continue
-                        
-                        file_id = self.get_or_create_file(file_path)
-                        
-                        lines_added = 0
-                        lines_deleted = 0
-                        
-                        if diff.diff:
-                            try:
-                                diff_text = diff.diff.decode('utf-8', errors='ignore')
-                                for line in diff_text.split('\n'):
-                                    if line.startswith('+') and not line.startswith('+++'):
-                                        lines_added += 1
-                                    elif line.startswith('-') and not line.startswith('---'):
-                                        lines_deleted += 1
-                            except:
-                                pass
-                        
-                        self.update_metrics(file_id, contributor_id, date_str, 1, lines_added, lines_deleted)
-                        
-                        if '/' in file_path:
-                            parts = file_path.split('/')
-                            for i in range(1, len(parts)):
-                                dir_path = '/'.join(parts[:i]) + '/'
-                                dir_id = self.get_or_create_file(dir_path)
-                                self.update_metrics(dir_id, contributor_id, date_str, 1, lines_added, lines_deleted)
+                # Use commit.stats for fast file extraction (no diff parsing needed)
+                for file_path in commit.stats.files.keys():
+                    file_id = self.get_or_create_file(file_path)
+                    self.update_metrics(file_id, contributor_id, date_str, commit_count=1)
                 
                 processed += 1
                 
