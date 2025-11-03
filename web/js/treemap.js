@@ -418,7 +418,7 @@ class TreemapVis {
             })
             .on('mouseover', (event, d) => {
                 this.highlightTreemapNode(d);
-                this.updateBreadcrumbFromTreemap(d);
+                this.updateBreadcrumbOnHover(d);
             })
             .on('mouseout', (event, d) => {
                 this.clearTreemapHighlight();
@@ -459,52 +459,62 @@ class TreemapVis {
             .call(this.zoom.transform, d3.zoomIdentity);
     }
 
-    updateBreadcrumb(node) {
+    // Shared breadcrumb update function - used by both treemap and file explorer
+    setBreadcrumb(path, isDirectory, commitCount = 0, additionalMetrics = null) {
         const breadcrumb = document.getElementById('breadcrumb');
         const info = document.getElementById('file-info');
-        const hoverPath = document.getElementById('hover-path');
         
-        if (!this.currentDirectory) {
-            breadcrumb.innerHTML = '<span style="color: #c9d1d9">root (Dir)</span>';
+        // Normalize path
+        const normalizedPath = path ? (path.endsWith('/') ? path.slice(0, -1) : path) : null;
+        
+        if (!normalizedPath) {
+            // Root level
+            breadcrumb.innerHTML = '<span style="color: #8b949e">root</span> / <span style="color: #58a6ff">root (Dir)</span>';
             info.innerHTML = '';
-            hoverPath.innerHTML = '';
             return;
         }
         
         // Split the path into parts
-        const pathParts = this.currentDirectory.split('/').filter(p => p);
+        const pathParts = normalizedPath.split('/').filter(p => p);
         const parts = ['root', ...pathParts];
         
-        // Determine if current level is a directory or file
-        const currentNode = node;
-        const isDirectory = currentNode && currentNode.children ? true : false;
         const typeLabel = isDirectory ? 'Dir' : 'File';
+        const commitText = commitCount > 0 ? ` - ${commitCount} commits` : '';
         
-        // Get commit count if available
-        let commitCount = '';
-        if (currentNode && currentNode.data && currentNode.data.metrics && currentNode.data.metrics.value) {
-            commitCount = ` - ${currentNode.data.metrics.value} commits`;
-        }
-        
-        breadcrumb.innerHTML = parts.map((name, i) => {
-            if (i === parts.length - 1) {
-                // Current level - not clickable, with type indicator and commit count
-                return `<span style="color: #c9d1d9">${name} (${typeLabel})${commitCount}</span>`;
+        // Build breadcrumb: gray for root path, blue for current item
+        const breadcrumbParts = parts.map((name, i) => {
+            if (i === 0) {
+                // Root - always gray and clickable
+                return `<span style="color: #8b949e" onclick="treemapVis.navigateToLevel(0)">${name}</span>`;
+            } else if (i === parts.length - 1) {
+                // Current item - blue and not clickable
+                return `<span style="color: #58a6ff">${name} (${typeLabel})${commitText}</span>`;
+            } else {
+                // Intermediate path - gray and clickable
+                return `<span style="color: #8b949e" onclick="treemapVis.navigateToLevel(${i})">${name}</span>`;
             }
-            // Clickable parent levels
-            return `<span onclick="treemapVis.navigateToLevel(${i})">${name}</span>`;
-        }).join(' / ');
+        });
+        
+        breadcrumb.innerHTML = breadcrumbParts.join(' / ');
         
         // Show additional metrics in file-info if available
-        if (currentNode && currentNode.data && currentNode.data.metrics) {
+        if (additionalMetrics) {
             const metrics = [];
-            const m = currentNode.data.metrics;
-            if (m.line_count) metrics.push(`Lines: ${m.line_count}`);
-            if (m.unique_contributors) metrics.push(`Contributors: ${m.unique_contributors}`);
+            if (additionalMetrics.line_count) metrics.push(`Lines: ${additionalMetrics.line_count}`);
+            if (additionalMetrics.unique_contributors) metrics.push(`Contributors: ${additionalMetrics.unique_contributors}`);
             info.innerHTML = metrics.join(' • ');
         } else {
             info.innerHTML = '';
         }
+    }
+
+    updateBreadcrumb(node) {
+        const path = this.currentDirectory;
+        const isDirectory = node && node.children ? true : false;
+        const commitCount = (node && node.data && node.data.metrics && node.data.metrics.value) || 0;
+        const additionalMetrics = (node && node.data && node.data.metrics) || null;
+        
+        this.setBreadcrumb(path, isDirectory, commitCount, additionalMetrics);
     }
 
     navigateToLevel(level) {
@@ -693,7 +703,7 @@ class TreemapVis {
             // Hover handlers - highlight in treemap and update breadcrumb
             node.addEventListener('mouseenter', () => {
                 this.highlightNodeInTreemap(path);
-                this.updateBreadcrumbOnHover(path);
+                this.updateBreadcrumbFromFileExplorer(path);
             });
             
             node.addEventListener('mouseleave', () => {
@@ -809,53 +819,45 @@ class TreemapVis {
             .attr('pointer-events', 'none');
     }
     
-    updateBreadcrumbFromTreemap(d) {
-        // Store the current breadcrumb if not already stored
+    // Update breadcrumb when hovering over treemap node
+    updateBreadcrumbOnHover(d) {
+        // Store the original breadcrumb for restoration
         if (!this.originalBreadcrumb) {
             this.originalBreadcrumb = document.getElementById('breadcrumb').innerHTML;
+            this.originalFileInfo = document.getElementById('file-info').innerHTML;
         }
         
         const path = d.data.path || d.data.name;
-        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        const isDirectory = !!d.children;
+        const commitCount = (d.data.metrics && d.data.metrics.value) || d.value || 0;
+        const additionalMetrics = d.data.metrics || null;
         
-        // Get commit count from the node's data
-        let commitCount = 0;
-        if (d.data.metrics && d.data.metrics.value) {
-            commitCount = d.data.metrics.value;
-        } else if (d.value) {
-            commitCount = d.value;
-        }
-        
-        // Update breadcrumb with hovered path
-        const breadcrumb = document.getElementById('breadcrumb');
-        const hoverPath = document.getElementById('hover-path');
-        const pathParts = normalizedPath.split('/').filter(p => p);
-        const parts = ['root', ...pathParts];
-        const typeLabel = d.children ? 'Dir' : 'File';
-        const commitText = commitCount > 0 ? ` - ${commitCount} commits` : '';
-        
-        breadcrumb.innerHTML = parts.map((name, i) => {
-            if (i === parts.length - 1) {
-                return `<span style="color: #58a6ff">${name} (${typeLabel})${commitText}</span>`;
-            }
-            return `<span style="color: #8b949e">${name}</span>`;
-        }).join(' / ');
-        
-        // Show full path in hover-path line
-        hoverPath.innerHTML = `<span style="color: #8b949e; font-size: 0.9em;">${normalizedPath}</span>`;
+        this.setBreadcrumb(path, isDirectory, commitCount, additionalMetrics);
     }
     
-    updateBreadcrumbOnHover(path) {
-        // Store the current breadcrumb if not already stored
+    restoreBreadcrumb() {
+        if (this.originalBreadcrumb) {
+            document.getElementById('breadcrumb').innerHTML = this.originalBreadcrumb;
+            document.getElementById('file-info').innerHTML = this.originalFileInfo || '';
+            this.originalBreadcrumb = null;
+            this.originalFileInfo = null;
+        }
+    }
+    
+    // Update breadcrumb when hovering over file explorer node
+    updateBreadcrumbFromFileExplorer(path) {
+        // Store the original breadcrumb for restoration
         if (!this.originalBreadcrumb) {
             this.originalBreadcrumb = document.getElementById('breadcrumb').innerHTML;
+            this.originalFileInfo = document.getElementById('file-info').innerHTML;
         }
-        
-        // Find the node data from explorerTreeData
-        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
         
         if (!this.explorerTreeData) return;
         
+        // Normalize path
+        const normalizedPath = path.endsWith('/') ? path.slice(0, -1) : path;
+        
+        // Find the node data from explorerTreeData
         const node = this.explorerTreeData.find(f => {
             const fp = f.path.endsWith('/') ? f.path.slice(0, -1) : f.path;
             return fp === normalizedPath;
@@ -863,41 +865,18 @@ class TreemapVis {
         
         if (!node) return;
         
-        // Get commit count from metricsData (which is a path->metrics map)
+        // Get commit count from metricsData
         let commitCount = 0;
+        let additionalMetrics = null;
         if (this.metricsData) {
-            // Try both with and without trailing slash
             const metrics = this.metricsData[normalizedPath] || this.metricsData[path];
-            if (metrics && metrics.value) {
-                commitCount = metrics.value;
+            if (metrics) {
+                commitCount = metrics.value || 0;
+                additionalMetrics = metrics;
             }
         }
         
-        // Update breadcrumb with hovered path
-        const breadcrumb = document.getElementById('breadcrumb');
-        const hoverPath = document.getElementById('hover-path');
-        const pathParts = normalizedPath.split('/').filter(p => p);
-        const parts = ['root', ...pathParts];
-        const typeLabel = node.is_directory ? 'Dir' : 'File';
-        const commitText = commitCount > 0 ? ` - ${commitCount} commits` : '';
-        
-        breadcrumb.innerHTML = parts.map((name, i) => {
-            if (i === parts.length - 1) {
-                return `<span style="color: #58a6ff">${name} (${typeLabel})${commitText}</span>`;
-            }
-            return `<span style="color: #8b949e">${name}</span>`;
-        }).join(' / ');
-        
-        // Show full path in hover-path line
-        hoverPath.innerHTML = `<span style="color: #8b949e; font-size: 0.9em;">${normalizedPath}</span>`;
-    }
-    
-    restoreBreadcrumb() {
-        if (this.originalBreadcrumb) {
-            document.getElementById('breadcrumb').innerHTML = this.originalBreadcrumb;
-            document.getElementById('hover-path').innerHTML = '';
-            this.originalBreadcrumb = null;
-        }
+        this.setBreadcrumb(path, node.is_directory, commitCount, additionalMetrics);
     }
     
     buildHierarchyForTree(files) {
