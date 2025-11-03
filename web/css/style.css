@@ -8,13 +8,115 @@ body {
     font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
     background: #0d1117;
     color: #c9d1d9;
+    overflow: hidden;
 }
 
 .container {
-    max-width: 100vw;
+    width: 100vw;
     height: 100vh;
     display: flex;
+}
+
+#tree-explorer {
+    width: 300px;
+    background: #161b22;
+    border-right: 1px solid #30363d;
+    display: flex;
     flex-direction: column;
+    transition: margin-left 0.3s ease;
+}
+
+#tree-explorer.collapsed {
+    margin-left: -300px;
+}
+
+.explorer-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 15px;
+    border-bottom: 1px solid #30363d;
+}
+
+.explorer-header h3 {
+    font-size: 14px;
+    margin: 0;
+    color: #8b949e;
+}
+
+#toggle-explorer {
+    background: transparent;
+    border: none;
+    color: #8b949e;
+    cursor: pointer;
+    font-size: 16px;
+    padding: 4px 8px;
+}
+
+#toggle-explorer:hover {
+    color: #c9d1d9;
+    background: #21262d;
+}
+
+#tree-search {
+    background: #0d1117;
+    border: 1px solid #30363d;
+    color: #c9d1d9;
+    padding: 8px 12px;
+    margin: 10px 15px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+#tree-search:focus {
+    outline: none;
+    border-color: #58a6ff;
+}
+
+#tree-view {
+    flex: 1;
+    overflow-y: auto;
+    padding: 10px;
+    font-size: 12px;
+    font-family: monospace;
+}
+
+.tree-node {
+    padding: 4px 8px;
+    cursor: pointer;
+    white-space: nowrap;
+    user-select: none;
+}
+
+.tree-node:hover {
+    background: #21262d;
+}
+
+.tree-node.directory {
+    color: #58a6ff;
+    font-weight: 500;
+}
+
+.tree-node.file {
+    color: #8b949e;
+}
+
+.tree-node.active {
+    background: #1f6feb;
+    color: #fff;
+}
+
+.tree-icon {
+    display: inline-block;
+    width: 16px;
+    margin-right: 4px;
+}
+
+.main-area {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
 }
 
 header {
@@ -53,12 +155,22 @@ h1 {
 #file-info strong {
     color: #c9d1d9;
 }
+
+#breadcrumb span {
+    cursor: pointer;
+    color: #58a6ff;
+}
+
+#breadcrumb span:hover {
+    text-decoration: underline;
+}
+
+.controls {
     background: #161b22;
     padding: 15px 20px;
     border-bottom: 1px solid #30363d;
     display: flex;
-    gap: 15px;
-    align-items: center;
+    gap: 10px;
 }
 
 button, select {
@@ -74,29 +186,6 @@ button, select {
 button:hover, select:hover {
     background: #30363d;
     border-color: #8b949e;
-}
-
-#timeline-container {
-    background: #161b22;
-    padding: 15px 20px;
-    border-bottom: 1px solid #30363d;
-}
-
-#timeline-container h3 {
-    font-size: 14px;
-    color: #8b949e;
-    margin-bottom: 10px;
-    font-weight: normal;
-}
-
-#timeline {
-    width: 100%;
-}
-
-.brush .selection {
-    fill: #58a6ff;
-    fill-opacity: 0.3;
-    stroke: #58a6ff;
 }
 
 #treemap {
@@ -118,14 +207,30 @@ button:hover, select:hover {
     opacity: 0.8;
 }
 
-.node-label {
-    pointer-events: none;
-    fill: #c9d1d9;
-    font-size: 11px;
-    font-weight: 500;
-    paint-order: stroke fill;
-    stroke: #0d1117;
-    stroke-width: 0.5px;
-    stroke-opacity: 0.8;
+#timeline-container {
+    background: #161b22;
+    padding: 15px 20px;
+    border-top: 1px solid #30363d;
 }
 
+#timeline-container h3 {
+    font-size: 14px;
+    color: #8b949e;
+    margin-bottom: 10px;
+    font-weight: normal;
+}
+
+#timeline {
+    width: 100%;
+}
+
+.brush .selection {
+    fill: #58a6ff;
+    fill-opacity: 0.3;
+    stroke: #58a6ff;
+    cursor: move;
+}
+
+.brush .handle {
+    cursor: ew-resize;
+}

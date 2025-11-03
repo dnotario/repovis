@@ -9,29 +9,40 @@
 </head>
 <body>
     <div class="container">
-        <header>
-            <div class="header-top">
-                <h1>RepoVis - Repository Treemap Visualization</h1>
+        <div id="tree-explorer">
+            <div class="explorer-header">
+                <h3>Files</h3>
+                <button id="toggle-explorer">◀</button>
             </div>
-            <div id="breadcrumb"></div>
-            <div id="file-info"></div>
-        </header>
-        
-        <div class="controls">
-            <button id="reset-btn">Reset View</button>
-            <select id="metric-select">
-                <option value="commit_count">Commit Count</option>
-                <option value="line_count">Line Count</option>
-                <option value="unique_contributors">Contributors</option>
-            </select>
+            <input type="text" id="tree-search" placeholder="Search files...">
+            <div id="tree-view"></div>
         </div>
         
-        <div id="timeline-container">
-            <h3>Time Range Selection</h3>
-            <div id="timeline"></div>
+        <div class="main-area">
+            <header>
+                <div class="header-top">
+                    <h1>RepoVis - Repository Treemap Visualization</h1>
+                </div>
+                <div id="breadcrumb"></div>
+                <div id="file-info"></div>
+            </header>
+            
+            <div class="controls">
+                <button id="reset-btn">Reset View</button>
+                <select id="metric-select">
+                    <option value="commit_count">Commit Count</option>
+                    <option value="line_count">Line Count</option>
+                    <option value="unique_contributors">Contributors</option>
+                </select>
+            </div>
+            
+            <div id="treemap"></div>
+            
+            <div id="timeline-container">
+                <h3>Time Range Selection</h3>
+                <div id="timeline"></div>
+            </div>
         </div>
-        
-        <div id="treemap"></div>
     </div>
     
     <script src="js/treemap.js"></script>

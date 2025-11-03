@@ -3,6 +3,8 @@ const API_BASE = 'http://127.0.0.1:8000/api';
 class TreemapVis {
     constructor() {
         this.treeData = null;
+        this.fullTreeData = null; // Store full structure
+        this.metricsData = null; // Store time-based metrics separately
         this.currentMetric = 'commit_count';
         this.currentRoot = null;
         this.width = 0;
@@ -17,9 +19,12 @@ class TreemapVis {
         // Get date range from timeline first (more efficient)
         await this.getDateRangeFromTimeline();
         
-        // Load data with full date range to get metrics
+        // Load file structure (this never changes)
+        await this.loadFileStructure();
+        
+        // Load metrics for initial time range
         if (this.dateRange) {
-            await this.loadData(this.dateRange.min_date, this.dateRange.max_date);
+            await this.loadMetrics(this.dateRange.min_date, this.dateRange.max_date);
         }
         
         // Setup timeline visualization
@@ -31,7 +36,10 @@ class TreemapVis {
         // Setup controls
         this.setupControls();
         
-        // Initial render with full data
+        // Setup tree explorer
+        this.setupTreeExplorer();
+        
+        // Initial render - builds structure once
         this.render();
     }
 
@@ -51,6 +59,48 @@ class TreemapVis {
             }
         } catch (error) {
             console.error('Error getting date range:', error);
+        }
+    }
+
+    async loadFileStructure() {
+        try {
+            // Load file structure without date filter - gets all files
+            const response = await fetch(`${API_BASE}/tree`);
+            const data = await response.json();
+            this.fullTreeData = data.files;
+            this.treeData = data.files;
+            console.log('File structure loaded:', this.fullTreeData.length, 'files');
+            
+            // Debug: log a few sample files
+            if (this.fullTreeData.length > 0) {
+                const rootFiles = this.fullTreeData.filter(f => f.parent_id === null);
+                console.log('Root files:', rootFiles.length, rootFiles.map(f => f.name));
+            }
+        } catch (error) {
+            console.error('Error loading file structure:', error);
+        }
+    }
+
+    async loadMetrics(startDate, endDate) {
+        try {
+            // Load only metrics for the time range
+            const url = `${API_BASE}/tree?start_date=${startDate}&end_date=${endDate}`;
+            const response = await fetch(url);
+            const data = await response.json();
+            
+            // Create a map of metrics by file path
+            this.metricsData = {};
+            data.files.forEach(f => {
+                const key = f.path || f.name;
+                this.metricsData[key] = f.metrics;
+            });
+            
+            console.log('Metrics loaded for', Object.keys(this.metricsData).length, 'files');
+            
+            // Update colors only, not structure
+            this.updateColors();
+        } catch (error) {
+            console.error('Error loading metrics:', error);
         }
     }
 
@@ -127,10 +177,10 @@ class TreemapVis {
                 .call(d3.axisBottom(x).ticks(5))
                 .style('color', '#8b949e');
             
-            // Brush for selection
+            // Brush for selection with drag support
             const brush = d3.brushX()
                 .extent([[0, 0], [width, height]])
-                .on('end', (event) => {
+                .on('brush end', (event) => {
                     if (!event.selection) return;
                     const [x0, x1] = event.selection;
                     const startDate = x.invert(x0);
@@ -141,11 +191,13 @@ class TreemapVis {
                         end: endDate.toISOString().split('T')[0]
                     };
                     
-                    this.loadData(this.selectedDateRange.start, this.selectedDateRange.end)
-                        .then(() => this.render());
+                    // Only reload on brush end to avoid too many updates
+                    if (event.type === 'end') {
+                        this.loadMetrics(this.selectedDateRange.start, this.selectedDateRange.end);
+                    }
                 });
             
-            svg.append('g')
+            const brushGroup = svg.append('g')
                 .attr('class', 'brush')
                 .call(brush)
                 .call(brush.move, [0, width]); // Select all by default
@@ -197,17 +249,20 @@ class TreemapVis {
     }
 
     buildHierarchy(files) {
+        // Always use full file structure
+        const allFiles = this.fullTreeData || files;
+        
         // Filter files if we're zoomed into a directory
-        let filteredFiles = files;
+        let filteredFiles = allFiles;
         if (this.currentDirectory) {
             const dirPath = this.currentDirectory.endsWith('/') ? this.currentDirectory : this.currentDirectory + '/';
             
             // Find the directory node
-            const dirNode = files.find(f => f.path === dirPath || f.path === this.currentDirectory);
+            const dirNode = allFiles.find(f => f.path === dirPath || f.path === this.currentDirectory);
             
             if (dirNode) {
                 // Include the directory itself and all its descendants
-                filteredFiles = files.filter(f => 
+                filteredFiles = allFiles.filter(f => 
                     f.id === dirNode.id || 
                     (f.path && f.path.startsWith(dirPath))
                 );
@@ -215,11 +270,15 @@ class TreemapVis {
             }
         }
         
-        // Create a map for quick lookup
+        // Create a map for quick lookup and apply current metrics
         const fileMap = {};
         filteredFiles.forEach(f => {
+            const key = f.path || f.name;
+            const currentMetrics = this.metricsData ? this.metricsData[key] : f.metrics;
+            
             fileMap[f.id] = {
                 ...f,
+                metrics: currentMetrics, // Use current time range metrics
                 children: []
             };
         });
@@ -342,10 +401,10 @@ class TreemapVis {
         console.log(`Clicked: ${d.data.name}, has children: ${!!d.children}, value: ${d.value}`);
         
         if (d.children && d.value > 0) {
-            // Zoom into this directory - filter to show only its contents
+            // Zoom into this directory - filter view, keep structure
             console.log(`Zooming into directory: ${d.data.name}, path: ${d.data.path}`);
             this.currentDirectory = d.data.path || d.data.name;
-            this.render();
+            this.render(); // Rebuild to show only this subtree
         } else if (d.children && d.value === 0) {
             // Directory with no metrics
             alert(`No data available for "${d.data.name}" in the selected time range.`);
@@ -354,10 +413,20 @@ class TreemapVis {
             console.log(`File clicked: ${d.data.name}`);
             if (d.parent && d.parent.data) {
                 this.currentDirectory = d.parent.data.path || d.parent.data.name;
-                this.render();
+                this.render(); // Rebuild to show parent's subtree
             }
             this.showInfo(d);
         }
+    }
+    
+    resetZoomAndRender() {
+        // Reset zoom/pan to identity transform
+        this.svg.transition()
+            .duration(300)
+            .call(this.zoom.transform, d3.zoomIdentity);
+        
+        // Then render
+        setTimeout(() => this.render(), 350);
     }
 
     updateBreadcrumb(node) {
@@ -386,7 +455,7 @@ class TreemapVis {
         if (level === 0) {
             // Go to root
             this.currentDirectory = null;
-            this.render();
+            this.render(); // Don't reset zoom
             return;
         }
         
@@ -395,7 +464,49 @@ class TreemapVis {
         const targetPath = pathParts.slice(0, level).join('/') + '/';
         
         this.currentDirectory = targetPath;
-        this.render();
+        this.render(); // Don't reset zoom
+    }
+    
+    updateColors() {
+        // Update only the fill colors of rectangles based on new metrics
+        if (!this.root) return;
+        
+        const displayRoot = this.currentRoot || this.root;
+        
+        // Recalculate max value with new metrics
+        const maxValue = d3.max(
+            displayRoot.descendants().filter(d => !d.children && d.data.metrics), 
+            d => d.data.metrics.value
+        ) || 1;
+        
+        const colorReversed = d3.scaleSequential()
+            .domain([maxValue, 0])
+            .interpolator(d3.interpolateRdYlGn)
+            .unknown('#30363d');
+        
+        // Update rectangle fills
+        this.g.selectAll('rect')
+            .transition()
+            .duration(500)
+            .attr('fill', function() {
+                const node = d3.select(this.parentNode).datum();
+                if (!node) return '#30363d';
+                
+                if (!node.children) {
+                    // Files
+                    return node.data.metrics ? colorReversed(node.data.metrics.value) : '#30363d';
+                } else {
+                    // Directories
+                    if (node.value > 0) {
+                        const baseColor = d3.color(colorReversed(node.value));
+                        baseColor.opacity = 0.3;
+                        return baseColor.toString();
+                    }
+                    return '#21262d';
+                }
+            });
+        
+        console.log(`Colors updated, max value: ${maxValue}`);
     }
 
     showInfo(d) {
@@ -430,7 +541,139 @@ class TreemapVis {
         
         info.innerHTML = parts.join('<br>');
     }
+    
+    setupTreeExplorer() {
+        const search = document.getElementById('tree-search');
+        search.addEventListener('input', (e) => {
+            this.filterTreeView(e.target.value);
+        });
+        
+        // Toggle button
+        const toggleBtn = document.getElementById('toggle-explorer');
+        const explorer = document.getElementById('tree-explorer');
+        toggleBtn.addEventListener('click', () => {
+            explorer.classList.toggle('collapsed');
+            toggleBtn.textContent = explorer.classList.contains('collapsed') ? '▶' : '◀';
+        });
+        
+        this.renderTreeView();
+    }
+    
+    renderTreeView(filter = '') {
+        if (!this.fullTreeData) {
+            console.log('renderTreeView: No fullTreeData');
+            return;
+        }
+        
+        console.log(`renderTreeView: ${this.fullTreeData.length} files, filter="${filter}"`);
+        
+        const treeView = document.getElementById('tree-view');
+        const hierarchy = this.buildHierarchyForTree(this.fullTreeData);
+        
+        console.log('Hierarchy:', hierarchy ? {name: hierarchy.name, childCount: hierarchy.children ? hierarchy.children.length : 0} : 'null');
+        
+        let html = '';
+        let nodeCount = 0;
+        const renderNode = (node, depth = 0) => {
+            if (!node) return;
+            
+            const isDir = node.is_directory;
+            const icon = isDir ? '📁' : '📄';
+            const className = isDir ? 'directory' : 'file';
+            
+            const matchesFilter = !filter || node.name.toLowerCase().includes(filter.toLowerCase());
+            
+            if (matchesFilter) {
+                const path = node.path || node.name;
+                html += `<div class="tree-node ${className}" data-path="${path}" style="padding-left: ${depth * 16 + 8}px">
+                    <span class="tree-icon">${icon}</span>${node.name}
+                </div>`;
+                nodeCount++;
+            }
+            
+            if (node.children && node.children.length > 0) {
+                node.children
+                    .sort((a, b) => {
+                        // Directories first, then alphabetical
+                        if (a.is_directory && !b.is_directory) return -1;
+                        if (!a.is_directory && b.is_directory) return 1;
+                        return a.name.localeCompare(b.name);
+                    })
+                    .forEach(child => renderNode(child, depth + 1));
+            }
+        };
+        
+        if (hierarchy) {
+            renderNode(hierarchy);
+        }
+        
+        console.log(`Rendered ${nodeCount} tree nodes`);
+        treeView.innerHTML = html;
+        
+        // Add click handlers
+        treeView.querySelectorAll('.tree-node').forEach(node => {
+            node.addEventListener('click', () => {
+                const path = node.getAttribute('data-path');
+                this.navigateToPath(path);
+            });
+        });
+    }
+    
+    buildHierarchyForTree(files) {
+        const fileMap = {};
+        files.forEach(f => {
+            fileMap[f.id] = { ...f, children: [] };
+        });
+        
+        files.forEach(f => {
+            const node = fileMap[f.id];
+            if (f.parent_id && fileMap[f.parent_id]) {
+                fileMap[f.parent_id].children.push(node);
+            }
+        });
+        
+        const roots = files.filter(f => f.parent_id === null);
+        console.log(`buildHierarchyForTree: ${roots.length} roots found`);
+        
+        // If multiple roots, create a synthetic root
+        if (roots.length === 0) {
+            return { name: 'root', children: [], is_directory: true };
+        } else if (roots.length === 1) {
+            return fileMap[roots[0].id];
+        } else {
+            // Multiple roots - create synthetic parent
+            const syntheticRoot = {
+                name: 'root',
+                is_directory: true,
+                children: roots.map(r => fileMap[r.id])
+            };
+            console.log(`Created synthetic root with ${syntheticRoot.children.length} children`);
+            return syntheticRoot;
+        }
+    }
+    
+    filterTreeView(filterText) {
+        this.renderTreeView(filterText);
+    }
+    
+    navigateToPath(path) {
+        const file = this.treeData.find(f => f.path === path || f.name === path);
+        if (!file) return;
+        
+        if (file.is_directory) {
+            this.currentDirectory = path;
+        } else {
+            // Navigate to parent
+            const parent = this.treeData.find(f => f.id === file.parent_id);
+            if (parent) {
+                this.currentDirectory = parent.path || parent.name;
+            }
+        }
+        
+        this.render();
+    }
 }
+
 
 // Initialize
 let treemapVis;
